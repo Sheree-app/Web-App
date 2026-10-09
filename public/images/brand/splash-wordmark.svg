@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <style>
+      @font-face {
+        font-family: Sacramento;
+        src: url('../../../node_modules/@expo-google-fonts/sacramento/400Regular/Sacramento_400Regular.ttf');
+      }
+      .wordmark { font-family: Sacramento, cursive; font-size: 224px; fill: #D98C9D; }
+    </style>
+  </defs>
+  <rect width="1024" height="1024" fill="#FFF8FA"/>
+  <text class="wordmark" x="512" y="590" text-anchor="middle">Sheree</text>
+  <ellipse cx="282" cy="426" rx="13" ry="24" fill="#F5D6DC" transform="rotate(-38 282 426)"/>
+</svg>

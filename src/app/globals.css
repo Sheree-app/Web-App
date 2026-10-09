@@ -1,0 +1,300 @@
+@import "tailwindcss";
+
+/* Sheree web design system.
+ *
+ * The palette, radii, type scale and shadows are ported 1:1 from the mobile
+ * app (`mobile/src/theme/tokens.ts`) so both clients speak the same visual
+ * language. Raw values live on `:root` / `.dark` as `--sh-*` variables; Tailwind
+ * only ever sees them through `@theme inline`, which is what lets a single
+ * utility class (`bg-surface`) follow the active colour scheme.
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  --sh-primary: #d98c9d;
+  --sh-secondary: #f5d6dc;
+  --sh-accent: #a8c3a0;
+  --sh-background: #fcfaf8;
+  --sh-surface: #ffffff;
+  --sh-surface-raised: #ffffff;
+  --sh-tint: #f8ebee;
+  --sh-ink: #2e2e2e;
+  --sh-ink-muted: #7d7d7d;
+  --sh-line: #eee4e2;
+  --sh-danger-surface: #fff3f3;
+  --sh-success-surface: #eef7f1;
+  --sh-overlay: rgb(46 35 38 / 0.48);
+  --sh-tabbar: #fffdfe;
+  --sh-success: #6fae8a;
+  --sh-warning: #e5b567;
+  --sh-danger: #d96c6c;
+  --sh-skeleton: #f5d6dc;
+
+  --sh-shadow-card: 0 8px 20px rgb(22 15 19 / 0.12);
+  --sh-shadow-lift: 0 18px 44px rgb(22 15 19 / 0.18);
+  --sh-shadow-bar: 0 -8px 28px rgb(22 15 19 / 0.08);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --sh-primary: #e3a0b1;
+  --sh-secondary: #593d48;
+  --sh-accent: #afc6a8;
+  --sh-background: #211b20;
+  --sh-surface: #2c2329;
+  --sh-surface-raised: #352a31;
+  --sh-tint: #422f38;
+  --sh-ink: #f7eff2;
+  --sh-ink-muted: #bcaeb4;
+  --sh-line: #493841;
+  --sh-danger-surface: #3b292f;
+  --sh-success-surface: #293a31;
+  --sh-overlay: rgb(10 7 9 / 0.72);
+  --sh-tabbar: #2a2026;
+  --sh-success: #87be9d;
+  --sh-warning: #e6bd78;
+  --sh-danger: #ee9298;
+  --sh-skeleton: #3b2f36;
+
+  --sh-shadow-card: 0 8px 20px rgb(0 0 0 / 0.4);
+  --sh-shadow-lift: 0 18px 44px rgb(0 0 0 / 0.5);
+  --sh-shadow-bar: 0 -8px 28px rgb(0 0 0 / 0.35);
+}
+
+@theme inline {
+  /* Colour — every utility resolves through the variables above. */
+  --color-primary: var(--sh-primary);
+  --color-secondary: var(--sh-secondary);
+  --color-accent: var(--sh-accent);
+  --color-background: var(--sh-background);
+  --color-surface: var(--sh-surface);
+  --color-raised: var(--sh-surface-raised);
+  --color-tint: var(--sh-tint);
+  --color-ink: var(--sh-ink);
+  --color-muted: var(--sh-ink-muted);
+  --color-line: var(--sh-line);
+  --color-danger-surface: var(--sh-danger-surface);
+  --color-success-surface: var(--sh-success-surface);
+  --color-overlay: var(--sh-overlay);
+  --color-tabbar: var(--sh-tabbar);
+  --color-success: var(--sh-success);
+  --color-warning: var(--sh-warning);
+  --color-danger: var(--sh-danger);
+  --color-skeleton: var(--sh-skeleton);
+
+  /* Type — Jakarta carries the interface, Sacramento only ever the wordmark. */
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-script: var(--font-sacramento), ui-serif, cursive;
+
+  /* Mobile type scale, unchanged. */
+  --text-hero: 40px;
+  --text-hero--line-height: 48px;
+  --text-hero--font-weight: 700;
+  --text-hero--letter-spacing: -0.02em;
+  --text-page: 30px;
+  --text-page--line-height: 38px;
+  --text-page--font-weight: 700;
+  --text-page--letter-spacing: -0.01em;
+  --text-section: 22px;
+  --text-section--line-height: 30px;
+  --text-section--font-weight: 700;
+  --text-title: 18px;
+  --text-title--line-height: 26px;
+  --text-title--font-weight: 500;
+  --text-body: 16px;
+  --text-body--line-height: 24px;
+  --text-caption: 13px;
+  --text-caption--line-height: 18px;
+  --text-eyebrow: 10px;
+  --text-eyebrow--line-height: 14px;
+  --text-eyebrow--font-weight: 700;
+  --text-eyebrow--letter-spacing: 0.18em;
+
+  /* Radii — named for the thing they wrap, not for their size. */
+  --radius-tile: 12px;
+  --radius-field: 16px;
+  --radius-panel: 20px;
+  --radius-card: 24px;
+
+  --shadow-card: var(--sh-shadow-card);
+  --shadow-lift: var(--sh-shadow-lift);
+  --shadow-bar: var(--sh-shadow-bar);
+
+  --animate-rise: rise 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  --animate-marquee: marquee 46s linear infinite;
+  --animate-marquee-reverse: marquee-reverse 58s linear infinite;
+  --animate-fade: fade 0.24s ease-out both;
+  --animate-sheet: sheet 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  --animate-pulse-soft: pulse-soft 1.4s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The lookbook rail: the one motion the brand is remembered by. */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes marquee-reverse {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheet {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0%,
+  100% {
+    opacity: 0.48;
+  }
+  50% {
+    opacity: 0.86;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.86;
+  }
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* iOS Safari bounces the whole page otherwise, which fights the sheet UI. */
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    background-color: var(--sh-background);
+    color: var(--sh-ink);
+    font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 24px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--sh-secondary);
+    color: var(--sh-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--sh-primary);
+    outline-offset: 2px;
+  }
+
+  /* Single-line inputs should use the font's own metrics; the 24px paragraph
+     line height makes the caret sit below the centred glyphs. */
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--sh-ink-muted);
+  }
+}
+
+/* Keeps content clear of the notch and the home indicator without inset
+   variables leaking "0px" gaps into layouts that don't need them. */
+@utility pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+
+@utility pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Horizontal rails of cards: snaps on touch, hides its scrollbar. */
+@utility rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  & > * {
+    scroll-snap-align: start;
+    flex: none;
+  }
+}
+
+@utility wordmark {
+  font-family: var(--font-sacramento), ui-serif, cursive;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,54 @@
+project_id = "sheree"
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+[db]
+port = 54322
+major_version = 17
+[studio]
+enabled = true
+port = 54323
+[auth]
+enabled = true
+site_url = "sheree://"
+additional_redirect_urls = ["exp://127.0.0.1:8081", "sheree:///sign-in", "sheree:///reset-password"]
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+[auth.email.template.confirmation]
+subject = "{{ .Token }} is your Sheree verification code"
+content_path = "./supabase/email-templates/confirm-signup.html"
+
+[auth.email.template.recovery]
+subject = "A lovely little reset for your Sheree account"
+content_path = "./supabase/email-templates/recovery.html"
+
+[functions.paystack-initialize]
+verify_jwt = false
+
+[functions.paystack-verify]
+verify_jwt = false
+
+[functions.paystack-webhook]
+verify_jwt = false
+
+[functions.payout-account]
+verify_jwt = false
+
+[functions.booking-manage]
+verify_jwt = false
+
+[functions.push-dispatch]
+verify_jwt = false
+
+[functions.notification-worker]
+verify_jwt = false
+
+[functions.account-delete]
+verify_jwt = false
+
+[functions.report-problem]
+verify_jwt = false
