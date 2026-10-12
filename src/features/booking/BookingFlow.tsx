@@ -656,7 +656,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
       <div className="h-28" aria-hidden />
 
       <div className="fixed inset-x-0 bottom-[calc(84px+env(safe-area-inset-bottom))] z-40 md:bottom-6">
-        <div className="mx-auto w-full max-w-[520px] px-4">
+        <div className="mx-auto w-full max-w-[520px] px-4 md:max-w-3xl md:px-8">
           <button
             type="button"
             disabled={ctaDisabled}

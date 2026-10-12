@@ -2,19 +2,12 @@ import { LookbookRail } from "@/components/brand/lookbook-rail";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ButtonLink } from "@/components/ui";
 
-/**
- * The landing page, rebuilt to match the mobile welcome screen line for line:
- * the same masthead, hairline, four-line display block, lookbook marquee, the
- * two sides of the marketplace, then the two ways in.
- *
- * The original was a single 520px column centred on the screen — that is what
- * it stays here, on every width, because the design is the point.
- */
+/** Responsive welcome screen with a two-column desktop layout. */
 export default function WelcomePage() {
   return (
     <div className="flex min-h-dvh flex-col bg-background px-6 pt-safe pb-safe">
-      <div className="mx-auto flex w-full max-w-[520px] flex-1 flex-col justify-between gap-4 py-4">
-        <div className="flex flex-col gap-4">
+      <div className="mx-auto flex w-full max-w-[520px] flex-1 flex-col justify-between gap-4 py-4 md:max-w-7xl md:py-8 lg:grid lg:grid-cols-2 lg:content-center lg:gap-x-16 lg:gap-y-10">
+        <div className="flex flex-col gap-4 lg:row-span-2 lg:gap-8">
           <header className="flex items-center justify-between">
             <Wordmark size="md" className="text-[34px] leading-[44px] text-ink" />
             <p className="text-eyebrow text-muted uppercase">Ghana</p>
@@ -24,7 +17,7 @@ export default function WelcomePage() {
 
           <h1
             aria-label="Run your beauty business. Find your look, and who makes it."
-            className="text-hero text-ink"
+            className="text-hero text-ink lg:text-[52px] lg:leading-[1.15] xl:text-[60px]"
           >
             <span className="block">Let Sheree</span>
             <span className="block">work for you.</span>
@@ -33,13 +26,13 @@ export default function WelcomePage() {
           </h1>
         </div>
 
-        <section className="flex flex-col gap-3">
+        <section className="flex min-w-0 flex-col gap-3 lg:overflow-hidden lg:rounded-card lg:bg-tint lg:p-8">
           <p className="text-eyebrow text-muted uppercase">The lookbook</p>
           <LookbookRail />
           <p className="text-caption text-muted">Save real work to your lookbook.</p>
         </section>
 
-        <section className="flex flex-col gap-4">
+        <section className="flex flex-col gap-4 lg:col-start-2">
           <p className="text-eyebrow text-muted uppercase">Both sides live here</p>
           <div className="flex gap-4">
             <div className="flex-1">
@@ -57,9 +50,9 @@ export default function WelcomePage() {
           </div>
         </section>
 
-        <section className="flex flex-col gap-4">
+        <section className="flex flex-col gap-4 lg:col-span-2">
           <div className="h-px bg-line" />
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 md:flex-row md:[&>*]:flex-1 lg:max-w-xl">
             <ButtonLink href="/sign-up">Join Sheree</ButtonLink>
             <ButtonLink href="/discover" variant="secondary">
               Explore Sheree

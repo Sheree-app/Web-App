@@ -4,3 +4,6 @@ AGENTS.md
 CLAUDE.md
 MIGRATION.md
 .next
+.DS_Store
+*.tsbuildinfo
+.env*.local

@@ -51,6 +51,7 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "*.supabase.in" },
       { protocol: "https", hostname: "*.r2.dev" },
       { protocol: "https", hostname: "images.unsplash.com" },
+      { protocol: "https", hostname: "cdn.sheree.world" },
       ...(r2Host ? [{ protocol: "https" as const, hostname: r2Host }] : []),
     ],
   },

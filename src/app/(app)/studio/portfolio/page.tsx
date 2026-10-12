@@ -293,7 +293,7 @@ export default function StudioPortfolioPage() {
           onAction={() => fileInputRef.current?.click()}
         />
       ) : (
-        <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
           {studio.map((photo) => (
             <div
               key={photo.id}

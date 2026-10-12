@@ -244,7 +244,7 @@ export default function ExplorePage() {
             ) : null}
 
             <Section title="Find your mood">
-              <div className="flex flex-wrap gap-3 px-4">
+              <div className="grid grid-cols-2 gap-3 px-4 lg:grid-cols-3">
                 {collections.map((collection, index) => {
                   const Icon = MOOD_ICONS[collection.icon] ?? Sparkles;
                   return (
@@ -254,7 +254,7 @@ export default function ExplorePage() {
                       onClick={() => setMoodTitle(collection.title)}
                       className={cn(
                         "relative overflow-hidden rounded-card p-4 text-left transition active:opacity-[.78]",
-                        index === 0 ? "min-h-[178px] w-full" : "min-h-[196px] w-[48%]",
+                        index === 0 ? "min-h-[178px] col-span-2 lg:col-span-1" : "min-h-[196px]",
                       )}
                       style={{ backgroundColor: collection.color }}
                     >

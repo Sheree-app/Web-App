@@ -256,7 +256,7 @@ export default function ProfessionalPage() {
           )
         ) : tab === "studio" ? (
           profile.studio.length > 0 ? (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
               {profile.studio.map((photo, index) => (
                 <button
                   key={photo.id}

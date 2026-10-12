@@ -93,10 +93,7 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
   const open = (post: FeedPost) => router.push(`/post/${post.id}`);
   const creator = (post: FeedPost) => router.push(`/professional/${post.professionalId}`);
 
-  // Two explicit columns, the right one dropped by 32px — the stagger is part
-  // of the design, so it is reproduced rather than approximated with columns.
-  const left = posts.filter((_, index) => index % 2 === 0);
-  const right = posts.filter((_, index) => index % 2 === 1);
+
 
   return (
     <div className="flex flex-col pt-2">
@@ -163,17 +160,16 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
 
       {posts.length > 0 ? (
         <>
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
-              {left.map((post) => (
-                <FeedCard key={post.id} post={post} onOpen={open} onCreator={creator} />
-              ))}
-            </div>
-            <div className="flex-1 pt-8">
-              {right.map((post) => (
-                <FeedCard key={post.id} post={post} onOpen={open} onCreator={creator} />
-              ))}
-            </div>
+          <div className="flex items-start gap-3 md:gap-5">
+            {[0, 1].map((column) => (
+              <div key={column} className={column === 1 ? "min-w-0 flex-1 pt-8 lg:pt-0" : "min-w-0 flex-1"}>
+                <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-5">
+                  {posts.filter((_, index) => index % 2 === column).map((post) => (
+                    <FeedCard key={post.id} post={post} onOpen={open} onCreator={creator} />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div ref={setSentinel} className="flex justify-center py-6">

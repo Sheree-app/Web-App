@@ -50,7 +50,7 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-30 border-b border-line/60 bg-background/92 pt-safe backdrop-blur-md">
-        <div className="mx-auto flex h-14 w-full max-w-[520px] items-center gap-3 px-4">
+        <div className="mx-auto flex h-14 w-full max-w-[520px] items-center gap-3 px-4 md:h-18 md:max-w-7xl md:px-8">
           <Link href={appMode === "professional" ? "/studio" : "/home"} aria-label="Sheree home">
             <Wordmark size="sm" />
           </Link>
@@ -87,15 +87,15 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
             <Avatar name={username} src={avatarUrl} size={34} />
           </Link>
         </div>
-        <div className="mx-auto hidden w-full max-w-[520px] items-center justify-end px-4 pb-2 md:flex">
+        <nav aria-label="Primary" className="mx-auto hidden w-full max-w-7xl items-center justify-end px-8 pb-3 md:flex">
           <TopNav mode={appMode} />
-        </div>
+        </nav>
       </header>
 
-      {/* The app is a phone layout. It stays one, centred, at every width. */}
+      {/* Expand the workspace when navigation moves into the desktop header. */}
       <main
         className={cn(
-          "mx-auto w-full max-w-[520px] flex-1 px-4 pt-4 pb-[calc(100px+env(safe-area-inset-bottom))]",
+          "mx-auto w-full max-w-[520px] flex-1 px-4 pt-4 pb-[calc(100px+env(safe-area-inset-bottom))] md:max-w-7xl md:px-8 md:pt-8 md:pb-12",
           className,
         )}
       >

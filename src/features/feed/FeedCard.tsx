@@ -65,7 +65,7 @@ function Component({ post, onOpen, onCreator, onReported }: Props) {
             src={post.imageUrl}
             alt={post.caption || `${post.category} by ${post.professionalName}`}
             fill
-            sizes="(min-width: 1024px) 32vw, (min-width: 768px) 45vw, 48vw"
+            sizes="(min-width: 1280px) 290px, (min-width: 1024px) 23vw, 48vw"
             className="object-cover"
           />
         </button>

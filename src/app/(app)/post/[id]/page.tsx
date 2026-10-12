@@ -311,7 +311,7 @@ export default function PostPage() {
 
       {/* Full-bleed gallery, exactly as the phone renders it. */}
       <div
-        className="relative -mx-4 max-h-[650px] min-h-[430px] w-[calc(100%+2rem)] max-w-[calc(520px+2rem)] overflow-hidden bg-secondary"
+        className="relative -mx-4 max-h-[650px] min-h-[430px] w-[calc(100%+2rem)] md:mx-auto md:w-full md:max-w-3xl md:rounded-card overflow-hidden bg-secondary"
         style={{ aspectRatio: `${ratio}` }}
       >
         <div
@@ -325,7 +325,7 @@ export default function PostPage() {
                 src={item.imageUrl}
                 alt={`${post.caption || post.category} — picture ${index + 1} of ${gallery.length}`}
                 fill
-                sizes="(min-width: 560px) 520px, 100vw"
+                sizes="(min-width: 768px) 768px, 100vw"
                 priority={index === 0}
                 className="object-cover"
               />

@@ -243,7 +243,7 @@ export default function SearchPage() {
                 body="Try a service, style, creator name or location."
               />
             ) : (
-              <div className="flex flex-col gap-3">
+              <div className="grid gap-3 lg:grid-cols-2">
                 {visible.map((item) => (
                   <ResultCard key={`${item.kind}-${item.id}`} item={item} />
                 ))}

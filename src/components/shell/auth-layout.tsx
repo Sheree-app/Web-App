@@ -1,6 +1,7 @@
 "use client";
 
 import { Wordmark } from "@/components/brand/wordmark";
+import { LookbookRail } from "@/components/brand/lookbook-rail";
 import { cn } from "@/lib/utils";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -11,7 +12,7 @@ import type { ReactNode } from "react";
  * masthead, eyebrow, headline, form, and a footer that sits on the baseline.
  *
  * On phones it is a single column that scrolls; from `md` up the form is a
- * centred card over the booking-pattern artwork the app already shipped.
+ * centred card, with a companion lookbook panel on desktop.
  */
 export function AuthLayout({
   eyebrow,
@@ -42,7 +43,7 @@ export function AuthLayout({
         className="pointer-events-none absolute inset-0 bg-[url('/images/brand/auth-booking-pattern.png')] bg-cover bg-center opacity-[0.07] dark:opacity-[0.05]"
       />
       <div className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pt-safe lg:flex-row lg:items-center lg:gap-16 lg:py-16">
-        <div className="flex flex-1 flex-col lg:max-w-md">
+        <div className="mx-auto flex w-full max-w-lg flex-1 flex-col md:my-10 md:rounded-card md:border md:border-line md:bg-surface md:p-8 md:shadow-card lg:my-0 lg:max-w-md lg:p-10">
           <div className="flex min-h-14 items-center justify-between pt-3">
             {back ? (
               <button
@@ -77,7 +78,19 @@ export function AuthLayout({
             {footer ? <div className="mt-auto pt-8">{footer}</div> : null}
           </div>
         </div>
-        {aside ? <div className="hidden flex-1 lg:block">{aside}</div> : null}
+        <div className="hidden min-w-0 flex-1 lg:block">
+          {aside ?? (
+            <section className="overflow-hidden rounded-[32px] bg-tint px-8 py-12">
+              <p className="text-eyebrow text-primary uppercase">Your next look starts here</p>
+              <h2 className="mt-4 text-hero text-ink">Find your inspiration.<br />Make it your own.</h2>
+              <p className="mt-5 mb-10 max-w-sm text-body text-muted">
+                Discover real work, find beauty professionals and make room for your next appointment.
+              </p>
+              <LookbookRail />
+              <p className="mt-8 text-caption text-muted">For the looks you love and the people who create them.</p>
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );
