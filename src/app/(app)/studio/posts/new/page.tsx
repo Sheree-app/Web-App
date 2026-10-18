@@ -1,4 +1,5 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
 
 import { FormError, Spinner } from "@/components/ui";
 import { getPostCategories, publishFeedPost, type PostCategory } from "@/features/feed/upload";
@@ -18,6 +19,7 @@ const MAX_POST_IMAGES = 8;
  * caption, the category chips, the GHS price field and Publish to Discover.
  */
 export default function NewPostPage() {
+  const { config } = usePricing();
   const router = useRouter();
   const { toast, error: showError } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -223,7 +225,7 @@ export default function NewPostPage() {
           Starting price <span className="font-normal text-muted">optional</span>
         </span>
         <div className="flex min-h-[54px] items-center gap-2 rounded-panel bg-surface px-4">
-          <span className="text-caption font-bold text-muted">GHS</span>
+          <span className="text-caption font-bold text-muted">{config.currency}</span>
           <input
             inputMode="decimal"
             aria-label="Starting price in Ghana cedis"

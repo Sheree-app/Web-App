@@ -1,4 +1,5 @@
 "use client";
+import { CustomerPrice } from "@/providers/pricing-provider";
 
 import { Avatar, Sheet, Spinner, Textarea } from "@/components/ui";
 import {
@@ -10,7 +11,7 @@ import {
   type PostImage,
 } from "@/features/feed/api";
 import type { FeedPost } from "@/features/feed/types";
-import { formatMoney, timeAgo } from "@/lib/utils";
+import { timeAgo } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
 import {
@@ -410,7 +411,7 @@ export default function PostPage() {
               Book with {firstName}
             </span>
             <span className="truncate text-body font-medium text-ink">
-              {post.priceFrom !== null ? `From ${formatMoney(post.priceFrom)}` : "Explore services"}
+              {post.priceFrom !== null ? `From ${<CustomerPrice value={post.priceFrom} />}` : "Explore services"}
             </span>
           </span>
           <span className="flex size-10 shrink-0 items-center justify-center rounded-field bg-ink text-background">

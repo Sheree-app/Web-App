@@ -1,4 +1,5 @@
 "use client";
+import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 
 import {
   Button,
@@ -17,7 +18,7 @@ import {
   type DisputeBooking,
   type DisputeCategory,
 } from "@/features/booking/api";
-import { formatMoney, formatSlot } from "@/lib/utils";
+import { formatSlot } from "@/lib/utils";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -148,7 +149,7 @@ export default function DisputePage() {
         <p className="text-title text-ink">{booking.serviceName}</p>
         <p className="text-caption text-muted">{formatSlot(booking.startsAt)}</p>
         <p className="text-caption text-muted">
-          Deposit paid: {formatMoney(booking.depositAmount)} · {booking.status}
+          Deposit paid: {formatMoney(toCedis(bookingDueNow({deposit_amount: booking.depositAmount, sheree_fee_amount: booking.shereeFeeAmount})), booking.currency)} · {booking.status}
         </p>
       </div>
 

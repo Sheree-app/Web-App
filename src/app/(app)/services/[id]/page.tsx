@@ -1,8 +1,10 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
+import { feeLabel, toCedis } from "@/lib/pricing";
 
 import { CardSkeleton, Sheet, Skeleton } from "@/components/ui";
 import { fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
-import { DEPOSIT_PERCENT, duration, money, type Service } from "@/features/services/data";
+import { duration, type Service } from "@/features/services/data";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft, ArrowRight, Clock, Info, Share2, ShieldCheck, Wallet } from "lucide-react";
 import Image from "next/image";
@@ -15,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
  * that ends in "Choose this service".
  */
 export default function ServicesPage() {
+  const { money, customerPrice, financials, config } = usePricing();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { toast } = useToast();
@@ -185,7 +188,7 @@ export default function ServicesPage() {
                       ) : null}
                       <span className="block text-title text-ink">{item.name}</span>
                     </span>
-                    <span className="shrink-0 text-title text-ink">{money(item.price)}</span>
+                    <span className="shrink-0 text-title text-ink">{customerPrice(item.price)}</span>
                   </span>
                   <span className="line-clamp-2 text-caption text-muted">{item.description}</span>
                   <span className="flex items-center gap-1.5 text-caption text-muted">
@@ -236,14 +239,13 @@ export default function ServicesPage() {
               />
               <Fact
                 icon={<Wallet aria-hidden className="size-5 text-primary" />}
-                label="Price"
+                label="Service price"
                 value={money(selected.price)}
               />
-              <Fact
-                icon={<ShieldCheck aria-hidden className="size-5 text-primary" />}
-                label="Deposit"
-                value={`${DEPOSIT_PERCENT}% · ${money((selected.price * DEPOSIT_PERCENT) / 100)}`}
-              />
+              <Fact icon={<ShieldCheck className="size-5 text-primary" />} label={feeLabel(config, financials(selected.price).capped)} value={money(toCedis(financials(selected.price).fee))} />
+              <Fact icon={<Wallet className="size-5 text-primary" />} label="Total" value={customerPrice(selected.price)} />
+              <Fact icon={<Wallet className="size-5 text-primary" />} label="Deposit due now" value={money(toCedis(financials(selected.price).dueNow))} />
+              <Fact icon={<Wallet className="size-5 text-primary" />} label="Balance after your appointment" value={money(toCedis(financials(selected.price).balance))} />
             </dl>
 
             <p className="flex items-start gap-2 rounded-panel bg-tint p-4 text-caption text-ink">
@@ -254,7 +256,7 @@ export default function ServicesPage() {
             <div className="flex items-end justify-between gap-3">
               <div>
                 <p className="text-eyebrow text-muted uppercase">Total</p>
-                <p className="text-section text-ink">{money(selected.price)}</p>
+                <p className="text-section text-ink">{customerPrice(selected.price)}</p>
               </div>
             </div>
           </div>

@@ -1,3 +1,4 @@
+export type BookingSnapshot = { price: number; deposit_amount: number; balance_amount: number; sheree_fee_amount: number | null; customer_total: number; currency: string };
 import { supabase } from "@/lib/supabase";
 import { FunctionsHttpError } from "@supabase/supabase-js";
 export type DayState = "available" | "limited" | "full" | "closed";
@@ -52,11 +53,12 @@ export async function reserveBooking(
   const id = data as string;
   const { data: booking, error: statusError } = await supabase
     .from("bookings" as never)
-    .select("status,booking_reference")
+    .select("status,booking_reference,price,deposit_amount,balance_amount,sheree_fee_amount,customer_total,currency")
     .eq("id", id)
     .single();
   if (statusError) throw statusError;
   return {
+    snapshot: booking as unknown as BookingSnapshot,
     id,
     status:(booking as unknown as{status:"requested"|"confirmed";booking_reference:string}).status,
     reference:(booking as unknown as{status:"requested"|"confirmed";booking_reference:string}).booking_reference,
@@ -226,6 +228,8 @@ export type CustomerBooking = {
   price: number;
   depositAmount: number;
   balanceAmount: number;
+  shereeFeeAmount: number | null;
+  currency: string;
   cancellationPolicy: string | null;
   professionalName: string;
   avatarUrl: string | null;
@@ -243,6 +247,8 @@ type BookingRow = {
   price: number | string;
   deposit_amount: number | string;
   balance_amount: number | string;
+  sheree_fee_amount: number | string | null;
+  currency: string;
   cancellation_policy: string | null;
   professional_profiles:
     | {
@@ -263,7 +269,7 @@ export async function fetchCustomerBookings(cursor:BookingCursor|null=null,pageS
   let query = supabase
     .from("bookings" as never)
     .select(
-      "id,professional_id,service_id,service_name,starts_at,ends_at,status,payment_status,price,deposit_amount,balance_amount,cancellation_policy,professional_profiles(display_name,business_name,profile_photo_url),reviews(id)",
+      "id,professional_id,service_id,service_name,starts_at,ends_at,status,payment_status,price,deposit_amount,balance_amount,sheree_fee_amount,currency,cancellation_policy,professional_profiles(display_name,business_name,profile_photo_url),reviews(id)",
     ).order("starts_at", { ascending: false }).order("id",{ascending:false}).limit(pageSize) as any;
   if(cursor)query=query.or(`starts_at.lt.${cursor.startsAt},and(starts_at.eq.${cursor.startsAt},id.lt.${cursor.id})`);
   const {data,error}=await query;
@@ -285,6 +291,8 @@ export async function fetchCustomerBookings(cursor:BookingCursor|null=null,pageS
       price: Number(row.price),
       depositAmount: Number(row.deposit_amount),
       balanceAmount: Number(row.balance_amount),
+      shereeFeeAmount: row.sheree_fee_amount == null ? null : Number(row.sheree_fee_amount),
+      currency: row.currency,
       cancellationPolicy: row.cancellation_policy,
       professionalName:
         joined?.display_name || joined?.business_name || "Your professional",
@@ -308,6 +316,8 @@ export type DisputeBooking = {
   status: CustomerBooking["status"];
   paymentStatus: CustomerBooking["paymentStatus"];
   depositAmount: number;
+  shereeFeeAmount: number | null;
+  currency: string;
 };
 export async function fetchBookingForDispute(
   bookingId: string,
@@ -315,7 +325,7 @@ export async function fetchBookingForDispute(
   const { data, error } = await supabase
     .from("bookings" as never)
     .select(
-      "id,service_name,starts_at,status,payment_status,deposit_amount,professional_profiles(display_name,business_name)",
+      "id,service_name,starts_at,status,payment_status,deposit_amount,sheree_fee_amount,currency,professional_profiles(display_name,business_name)",
     )
     .eq("id", bookingId)
     .single();
@@ -327,6 +337,8 @@ export async function fetchBookingForDispute(
     status: CustomerBooking["status"];
     payment_status: CustomerBooking["paymentStatus"];
     deposit_amount: number | string;
+    sheree_fee_amount: number | string | null;
+    currency: string;
     professional_profiles:
       | { display_name: string | null; business_name: string }
       | Array<{ display_name: string | null; business_name: string }>
@@ -344,6 +356,8 @@ export async function fetchBookingForDispute(
     status: row.status,
     paymentStatus: row.payment_status,
     depositAmount: Number(row.deposit_amount),
+    shereeFeeAmount: row.sheree_fee_amount == null ? null : Number(row.sheree_fee_amount),
+    currency: row.currency,
   };
 }
 export async function submitBookingDispute(input: {

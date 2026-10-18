@@ -6,16 +6,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-/**
- * Prices the way the app writes them: the cedi sign, no space, and decimals
- * only when the number actually has them — `GH₵220`, not `GHS 220.00`.
- */
-export function formatMoney(amount: number | string | null | undefined) {
-  const value = typeof amount === "string" ? Number(amount) : (amount ?? 0);
-  if (!Number.isFinite(value)) return "GH₵0";
-  return `GH₵${Number.isInteger(value) ? value : value.toFixed(2)}`;
-}
-
 /** `1.2 km` / `900 m`, matching the distance copy used across explore. */
 export function formatDistance(metres: number | null | undefined) {
   if (!metres || !Number.isFinite(metres)) return "";

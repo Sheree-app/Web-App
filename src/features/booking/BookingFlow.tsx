@@ -1,4 +1,7 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
+import { bookingDueNow, feeLabel, toCedis, formatMoney } from "@/lib/pricing";
+import type { BookingSnapshot } from "./api";
 
 import { Skeleton, Spinner, Textarea } from "@/components/ui";
 import {
@@ -16,7 +19,7 @@ import {
 } from "@/features/booking/api";
 import { formatTime12 } from "@/features/booking/time-format";
 import { fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
-import { DEPOSIT_PERCENT, duration, money, type Service } from "@/features/services/data";
+import { duration, type Service } from "@/features/services/data";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/providers/toast-provider";
 import {
@@ -82,6 +85,9 @@ const EMPTY_FULFILMENT: BookingFulfilment = {
  * server-side, hand off to Paystack, and let `/booking/return` confirm.
  */
 export function BookingFlow({ professionalId }: { professionalId: string }) {
+  const pricing = usePricing();
+  const [snapshot, setSnapshot] = useState<BookingSnapshot | null>(null);
+  const money = (value: number) => formatMoney(value, snapshot?.currency ?? pricing.config.currency);
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -223,9 +229,10 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     setStep(step === "time" ? "date" : step === "summary" ? "time" : "date");
   };
 
-  const serviceDeposit = service ? (service.price * DEPOSIT_PERCENT) / 100 : 0;
+  const totals = pricing.financials(service?.price ?? 0);
+  const fee = snapshot ? Number(snapshot.sheree_fee_amount ?? 0) : toCedis(totals.fee);
   const selectedTravelFee = mobileService ? fulfilment.travelFee : 0;
-  const deposit = fulfilment.depositRequired ? serviceDeposit + selectedTravelFee : 0;
+  const deposit = snapshot ? toCedis(bookingDueNow(snapshot)) : toCedis(totals.deposit) + fee;
 
   const confirm = async () => {
     if (!service || !selectedDate || !selectedTime) return;
@@ -235,6 +242,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
 
     try {
       let id = bookingId;
+      let stored = snapshot;
       if (!id) {
         const booking = await reserveBooking(
           service.id,
@@ -242,13 +250,15 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
           notes,
           mobileService,
         );
+        stored = booking.snapshot;
+        setSnapshot(stored);
         id = booking.id;
         setBookingId(id);
         setBookingReference(booking.reference);
         setBookingStatus(booking.status);
       }
 
-      if (!fulfilment.depositRequired) {
+      if (stored && bookingDueNow(stored) === 0) {
         setStep("confirmed");
         return;
       }
@@ -267,6 +277,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     } catch (cause) {
       if (cause instanceof BookingAvailabilityError) {
         setBookingId("");
+        setSnapshot(null);
         setStep("time");
         await loadSlots(selectedDate);
         const alert = bookingAvailabilityAlert(cause.message);
@@ -325,7 +336,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         date={selectedDate}
         time={selectedTime}
         deposit={deposit}
-        depositRequired={fulfilment.depositRequired}
+        depositRequired={deposit > 0}
       />
     );
   }
@@ -600,36 +611,23 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
           </div>
 
           <div className="mt-4 flex flex-col gap-3 rounded-card bg-tint p-4">
-            <Price label="Service" value={money(service.price)} />
+            <Price label="Service price" value={money(snapshot ? Number(snapshot.price) : service.price)} />
+            {(!snapshot || snapshot.sheree_fee_amount !== null) && <Price label={snapshot ? "Sheree service fee" : feeLabel(pricing.config, totals.capped)} value={money(fee)} />}
             {mobileService ? (
               <Price label="Professional travel fee" value={money(selectedTravelFee)} />
             ) : null}
             <Price
               label="Appointment total"
-              value={money(service.price + selectedTravelFee)}
+              value={money(snapshot ? Number(snapshot.customer_total ?? snapshot.price) : toCedis(totals.total) + selectedTravelFee)}
               strong
             />
             <Price
-              label={
-                fulfilment.depositRequired
-                  ? mobileService
-                    ? `Due now (${DEPOSIT_PERCENT}% service deposit + travel)`
-                    : `Deposit due now (${DEPOSIT_PERCENT}%)`
-                  : "Due now"
-              }
+              label={snapshot ? "Amount due now" : "Deposit due now (40% + service fee)"}
               value={money(deposit)}
             />
             <Price
-              label={
-                fulfilment.depositRequired
-                  ? "Balance after appointment"
-                  : "Pay the professional after your appointment"
-              }
-              value={money(
-                fulfilment.depositRequired
-                  ? service.price - serviceDeposit
-                  : service.price + selectedTravelFee,
-              )}
+              label="Balance after your appointment"
+              value={money(snapshot ? Number(snapshot.balance_amount) : toCedis(totals.balance))}
             />
           </div>
 
@@ -644,9 +642,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
           <p className="mt-4 flex items-start gap-2">
             <ShieldCheck aria-hidden className="size-5 shrink-0 text-success" />
             <span className="flex-1 text-caption text-muted">
-              {fulfilment.depositRequired
-                ? "Free cancellation up to 24 hours before. Your deposit is securely processed by Paystack."
-                : "No deposit is needed in this region. Book now and arrange payment with the professional."}
+              Free cancellation up to 24 hours before. Your deposit and Sheree service fee are securely processed by Paystack.
             </span>
           </p>
         </>
@@ -680,8 +676,8 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
             {saving ? (
               <Spinner className="[&>svg]:text-surface" label="Processing" />
             ) : step === "summary" ? (
-              fulfilment.depositRequired ? (
-                `Pay ${money(deposit)} deposit`
+              deposit > 0 ? (
+                `Pay ${money(deposit)} now`
               ) : (
                 "Book without deposit"
               )
@@ -780,6 +776,7 @@ function ConfirmedScreen({
   deposit: number;
   depositRequired: boolean;
 }) {
+  const { money } = usePricing();
   const router = useRouter();
 
   return (

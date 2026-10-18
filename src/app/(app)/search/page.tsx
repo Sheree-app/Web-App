@@ -1,8 +1,8 @@
 "use client";
+import { CustomerPrice, usePricing } from "@/providers/pricing-provider";
 
 import { Skeleton } from "@/components/ui";
 import { searchMarketplace, type PriceSort, type SearchKind, type SearchResult } from "@/features/search/api";
-import { formatMoney } from "@/lib/utils";
 import {
   ArrowDown,
   ArrowLeft,
@@ -50,10 +50,10 @@ function priceActive(value: SearchPricing) {
   );
 }
 
-function priceLabel(value: SearchPricing) {
+function priceLabel(value: SearchPricing, currency: string) {
   if (value.sort === "low_to_high") return "Low first";
   if (value.sort === "high_to_low") return "High first";
-  if (value.minimum !== null && value.maximum !== null) return `GH₵${value.minimum}–${value.maximum}`;
+  if (value.minimum !== null && value.maximum !== null) return `${currency} ${value.minimum}?${value.maximum}`;
   if (value.maximum !== null) return `Under ${value.maximum}`;
   if (value.minimum !== null) return `${value.minimum}+`;
   return "Price";
@@ -79,6 +79,7 @@ const initialPricing: SearchPricing = {
  * the same price panel — including its labels and its validation message.
  */
 export default function SearchPage() {
+  const { config } = usePricing();
   const router = useRouter();
 
   const [query, setQuery] = useState("");
@@ -213,7 +214,7 @@ export default function SearchPage() {
                 }`}
               >
                 <SlidersHorizontal aria-hidden className="size-[14px]" />
-                {priceLabel(pricing)}
+                {priceLabel(pricing, config.currency)}
               </button>
             </div>
 
@@ -320,7 +321,7 @@ function ResultCard({ item }: { item: SearchResult }) {
             {item.rating > 0 ? `★ ${item.rating} (${item.reviewCount})` : item.location}
           </span>
           {item.price !== null ? (
-            <span className="text-caption font-bold text-ink">from {formatMoney(item.price)}</span>
+            <span className="text-caption font-bold text-ink">from {<CustomerPrice value={item.price} />}</span>
           ) : null}
         </span>
       </span>

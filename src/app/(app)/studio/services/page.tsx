@@ -1,4 +1,5 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
 
 import { FormError, Sheet, Skeleton } from "@/components/ui";
 import { fetchPayoutAccount } from "@/features/account/payoutApi";
@@ -9,7 +10,7 @@ import {
   uploadServicePhoto,
   type ServiceCategory,
 } from "@/features/services/api";
-import { DEPOSIT_PERCENT, duration, money, type Service } from "@/features/services/data";
+import { DEPOSIT_PERCENT, duration, type Service } from "@/features/services/data";
 import { useToast } from "@/providers/toast-provider";
 import {
   ArrowRight,
@@ -55,6 +56,7 @@ const blank: Draft = {
  * grouped rows, and one editor sheet for adding and editing.
  */
 export default function StudioServicesPage() {
+  const { money, customerPrice, config } = usePricing();
   const { toast, error: showError } = useToast();
 
   const [items, setItems] = useState<Service[]>([]);
@@ -298,7 +300,8 @@ export default function StudioServicesPage() {
                       </span>
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-3">
-                      <span className="text-body font-medium text-ink">{money(item.price)}</span>
+                      <span className="text-body font-medium text-ink">{money(item.price)} you receive</span>
+                      <span className="text-caption text-muted">Customer pays {customerPrice(item.price)}. Sheree&apos;s {Number((config.service_fee_rate * 100).toFixed(4))}% service fee is added on top; it never comes out of your price.</span>
                       <Pencil aria-hidden className="size-[18px] text-muted" />
                     </span>
                   </button>
@@ -422,7 +425,7 @@ export default function StudioServicesPage() {
 
             <div className="flex gap-3">
               <label className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <span className="text-caption font-bold text-ink">Price (GH₵)</span>
+                <span className="text-caption font-bold text-ink">Price ({config.currency})</span>
                 <input
                   inputMode="decimal"
                   value={draft.price}

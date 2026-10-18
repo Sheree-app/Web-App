@@ -10,7 +10,7 @@ export type Service = {
   active: boolean;
   popular?: boolean;
 };
-export const DEPOSIT_PERCENT = 50;
+export const DEPOSIT_PERCENT = 40;
 export const demoServices: Service[] = [
   {
     id: "s1",
@@ -60,14 +60,6 @@ export const demoServices: Service[] = [
     active: false,
   },
 ];
-export const money = (value: number) => {
-  const cents = Math.round(value * 100);
-  const whole = Math.floor(cents / 100);
-  const pesewas = cents % 100;
-  return pesewas === 0
-    ? `GH₵${whole}`
-    : `GH₵${whole}.${String(pesewas).padStart(2, "0")}`;
-};
 export const duration = (minutes: number) =>
   minutes >= 60
     ? `${Math.floor(minutes / 60)} hr${minutes >= 120 ? "s" : ""}${minutes % 60 ? ` ${minutes % 60} min` : ""}`

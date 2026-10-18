@@ -1,4 +1,5 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
 
 import {
   Badge,
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui";
 import { fetchPayouts, type Payout, type PayoutsData } from "@/features/account/payoutsApi";
 import { useAuth } from "@/providers/auth-provider";
-import { formatDay, formatMoney } from "@/lib/utils";
+import { formatDay } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
 const STATUS_TONE: Record<Payout["status"], "neutral" | "success" | "warning" | "error"> = {
@@ -34,6 +35,7 @@ const TYPE_LABEL: Record<Payout["payoutType"], string> = {
  * reversed is surfaced first, because that is the only part that needs action.
  */
 export default function PayoutsPage() {
+  const { money: formatMoney } = usePricing();
   const { user } = useAuth();
   const [data, setData] = useState<PayoutsData | null>(null);
   const [loading, setLoading] = useState(true);

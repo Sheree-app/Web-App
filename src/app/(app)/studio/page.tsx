@@ -1,4 +1,5 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
 
 import { Avatar, Skeleton, Spinner, Sheet } from "@/components/ui";
 import {
@@ -15,12 +16,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 /** Cedi, whole numbers — the same figures the app puts on the metric cards. */
-const money = (value: number) =>
-  new Intl.NumberFormat("en-GH", {
-    style: "currency",
-    currency: "GHS",
-    maximumFractionDigits: 0,
-  }).format(value);
+
 
 const clock = (value: string) =>
   new Date(value).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -46,6 +42,7 @@ type ActionResult = { warning?: string | null; refund?: string | null } | null;
  * and the coming-up outlook.
  */
 export default function StudioPage() {
+  const { money } = usePricing();
   const { toast, error: showError } = useToast();
 
   const [data, setData] = useState<ProfessionalDashboard | null>(null);
@@ -330,6 +327,7 @@ function Appointment({
   busy: boolean;
   onUpdate: (action: "confirm" | "complete" | "cancel") => void;
 }) {
+  const { money } = usePricing();
   const next = item.status === "requested" ? "confirm" : "complete";
 
   return (

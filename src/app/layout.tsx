@@ -1,3 +1,6 @@
+import { PricingProvider } from "@/providers/pricing-provider";
+import { fetchFeeConfig } from "@/lib/pricing";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AppSplash } from "@/components/brand/splash";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
@@ -58,7 +61,8 @@ export const viewport: Viewport = {
  */
 const themeBootScript = `(function(){try{var s=localStorage.getItem("sheree:appearance");var m=window.matchMedia("(prefers-color-scheme: dark)").matches;var d=s==="dark"||(s==="system"&&m);document.documentElement.classList.toggle("dark",d);var t=document.querySelector('meta[name="theme-color"]');if(t)t.setAttribute("content",d?"#211B20":"#FCFAF8")}catch(e){}})();`;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const config = await fetchFeeConfig(await createSupabaseServerClient());
   return (
     <html lang="en" className={`${jakarta.variable} ${sacramento.variable}`} suppressHydrationWarning>
       <head>
@@ -68,8 +72,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <ToastProvider>
             <AuthProvider>
+              <PricingProvider initialConfig={config}>
               <AppSplash />
               {children}
+              </PricingProvider>
             </AuthProvider>
           </ToastProvider>
         </ThemeProvider>

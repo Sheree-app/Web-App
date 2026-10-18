@@ -1,4 +1,6 @@
 "use client";
+import { usePricing } from "@/providers/pricing-provider";
+import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 
 import { Avatar, RowSkeleton, Sheet } from "@/components/ui";
 import { cancelCustomerBooking, fetchCustomerBookings } from "@/features/booking/api";
@@ -23,13 +25,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 type Booking = Awaited<ReturnType<typeof fetchCustomerBookings>>["items"][number];
 type Filter = "upcoming" | "past";
 
-/** Same money as the app's booking list: whole cedi, no pesewas. */
-const money = (value: number) =>
-  new Intl.NumberFormat("en-GH", {
-    style: "currency",
-    currency: "GHS",
-    maximumFractionDigits: 0,
-  }).format(value);
+const money = (value: number, currency: string) => formatMoney(value, currency);
 
 const dayNumber = (value: string) =>
   new Date(value).toLocaleDateString("en-GB", { day: "2-digit" });
@@ -64,10 +60,10 @@ const paymentLabel = (booking: Booking) =>
 
 const paymentValue = (booking: Booking) =>
   booking.paymentStatus === "refunded"
-    ? money(booking.depositAmount)
+    ? money(booking.depositAmount, booking.currency)
     : booking.paymentStatus === "paid" || booking.paymentStatus === "refund_pending"
-      ? money(booking.price)
-      : money(booking.balanceAmount);
+      ? money(toCedis(bookingDueNow({deposit_amount: booking.depositAmount, sheree_fee_amount: booking.shereeFeeAmount})), booking.currency)
+      : money(booking.balanceAmount, booking.currency);
 
 const TONE: Record<string, string> = {
   confirmed: "bg-success text-success",
@@ -86,6 +82,7 @@ const isLive = (booking: Booking) =>
  * again — always available, exactly as the app offers it.
  */
 export default function BookingsPage() {
+  const { money } = usePricing();
   const router = useRouter();
   const { success, error: showError, toast } = useToast();
 
@@ -289,6 +286,7 @@ export default function BookingsPage() {
             </Detail>
             <Detail icon={<Receipt aria-hidden className="size-[18px]" />}>
               {paymentLabel(selected)} · {paymentValue(selected)}
+              {selected.shereeFeeAmount !== null && <span className="block">Sheree service fee: {formatMoney(selected.shereeFeeAmount, selected.currency)}</span>}
             </Detail>
 
             <div className="mt-8 flex flex-col gap-3">

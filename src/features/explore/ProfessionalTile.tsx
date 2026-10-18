@@ -1,6 +1,7 @@
 "use client";
+import { CustomerPrice } from "@/providers/pricing-provider";
 
-import { cn, formatMoney } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { Professional } from "@/features/explore/data";
 import { BadgeCheck, Sparkles } from "lucide-react";
 import Image from "next/image";
@@ -65,7 +66,7 @@ export function ProfessionalTile({
           <span className="text-[12px] font-bold text-ink">
             ★ {item.rating} <span className="font-normal text-muted">({item.reviews})</span>
           </span>
-          <span className="text-[11px] font-bold text-ink">from {formatMoney(item.price)}</span>
+          <span className="text-[11px] font-bold text-ink">from {<CustomerPrice value={item.price} />}</span>
         </span>
 
         {item.available ? (
