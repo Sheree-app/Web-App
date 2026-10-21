@@ -1,5 +1,6 @@
 "use client";
 
+import { MessageLink } from "@/features/messaging/MessageLink";
 import { Wordmark } from "@/components/brand/wordmark";
 import { BottomNav, TopNav } from "@/components/shell/bottom-nav";
 import { Avatar } from "@/components/ui";
@@ -64,6 +65,7 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
               Business mode
             </Link>
           ) : null}
+          {signedIn && <MessageLink />}
           {signedIn ? (
             <Link
               href="/notifications"

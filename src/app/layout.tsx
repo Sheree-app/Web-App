@@ -1,3 +1,4 @@
+import { MessagingProvider } from "@/providers/messaging-provider";
 import { PricingProvider } from "@/providers/pricing-provider";
 import { fetchFeeConfig } from "@/lib/pricing";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -72,10 +73,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ThemeProvider>
           <ToastProvider>
             <AuthProvider>
+              <MessagingProvider>
               <PricingProvider initialConfig={config}>
               <AppSplash />
               {children}
               </PricingProvider>
+              </MessagingProvider>
             </AuthProvider>
           </ToastProvider>
         </ThemeProvider>

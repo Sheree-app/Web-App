@@ -4,6 +4,7 @@ import { CardSkeleton, Spinner } from "@/components/ui";
 import { FeedCard } from "@/features/feed/FeedCard";
 import { fetchFeed } from "@/features/feed/api";
 import { fetchUnreadNotificationCount } from "@/features/notifications/api";
+import { MessageLink } from "@/features/messaging/MessageLink";
 import type { FeedPost } from "@/features/feed/types";
 import { useAuth } from "@/providers/auth-provider";
 import { Bell, CloudOff, Images } from "lucide-react";
@@ -47,15 +48,21 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
         setError(null);
         const [page, count] = await Promise.all([
           fetchFeed(reset ? null : cursor.current, PAGE_SIZE),
-          reset && signedIn ? fetchUnreadNotificationCount(appMode) : Promise.resolve(0),
+          reset && signedIn
+            ? fetchUnreadNotificationCount(appMode)
+            : Promise.resolve(0),
         ]);
 
-        setPosts((current) => (reset ? page.items : [...current, ...page.items]));
+        setPosts((current) =>
+          reset ? page.items : [...current, ...page.items],
+        );
         cursor.current = page.nextCursor;
         setHasMore(Boolean(page.nextCursor));
         if (reset) setUnread(count);
       } catch {
-        setError("We couldn’t load fresh work. Check your connection and try again.");
+        setError(
+          "We couldn’t load fresh work. Check your connection and try again.",
+        );
         setHasMore(false);
       } finally {
         inFlight.current = false;
@@ -87,13 +94,13 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
   // page leaves it on screen, keep paging until the viewport is actually filled.
   useEffect(() => {
     if (!sentinel || !hasMore || error || loading || loadingMore) return;
-    if (sentinel.getBoundingClientRect().top <= window.innerHeight + 600) void load(false);
+    if (sentinel.getBoundingClientRect().top <= window.innerHeight + 600)
+      void load(false);
   }, [error, hasMore, load, loading, loadingMore, posts.length, sentinel]);
 
   const open = (post: FeedPost) => router.push(`/post/${post.id}`);
-  const creator = (post: FeedPost) => router.push(`/professional/${post.professionalId}`);
-
-
+  const creator = (post: FeedPost) =>
+    router.push(`/professional/${post.professionalId}`);
 
   return (
     <div className="flex flex-col pt-2">
@@ -103,16 +110,21 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
           <h1 className="text-page text-ink">Made for you</h1>
         </div>
         {signedIn ? (
-          <Link
-            href="/notifications"
-            aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
-            className="relative flex size-11 shrink-0 items-center justify-center rounded-full bg-surface text-ink transition active:scale-95"
-          >
-            <Bell aria-hidden className="size-[23px]" />
-            {unread > 0 ? (
-              <span className="absolute top-[9px] right-[10px] size-[7px] rounded-full border-[1.5px] border-surface bg-primary" />
-            ) : null}
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <MessageLink className="size-11 transition active:scale-95" iconClassName="size-[23px]" />
+            <Link
+              href="/notifications"
+              aria-label={
+                unread > 0 ? `Notifications, ${unread} unread` : "Notifications"
+              }
+              className="relative flex size-11 shrink-0 items-center justify-center rounded-full bg-surface text-ink transition active:scale-95"
+            >
+              <Bell aria-hidden className="size-[23px]" />
+              {unread > 0 ? (
+                <span className="absolute top-[9px] right-[10px] size-[7px] rounded-full border-[1.5px] border-surface bg-primary" />
+              ) : null}
+            </Link>
+          </div>
         ) : (
           <Link
             href="/sign-in"
@@ -162,11 +174,25 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
         <>
           <div className="flex items-start gap-3 md:gap-5">
             {[0, 1].map((column) => (
-              <div key={column} className={column === 1 ? "min-w-0 flex-1 pt-8 lg:pt-0" : "min-w-0 flex-1"}>
+              <div
+                key={column}
+                className={
+                  column === 1
+                    ? "min-w-0 flex-1 pt-8 lg:pt-0"
+                    : "min-w-0 flex-1"
+                }
+              >
                 <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-5">
-                  {posts.filter((_, index) => index % 2 === column).map((post) => (
-                    <FeedCard key={post.id} post={post} onOpen={open} onCreator={creator} />
-                  ))}
+                  {posts
+                    .filter((_, index) => index % 2 === column)
+                    .map((post) => (
+                      <FeedCard
+                        key={post.id}
+                        post={post}
+                        onOpen={open}
+                        onCreator={creator}
+                      />
+                    ))}
                 </div>
               </div>
             ))}

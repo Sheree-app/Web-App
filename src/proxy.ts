@@ -17,6 +17,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * depend on them also happen.
  */
 const PROTECTED_PREFIXES = [
+  "/messages",
   "/bookings",
   "/profile",
   "/bookmarks",

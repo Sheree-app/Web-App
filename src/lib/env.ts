@@ -11,6 +11,7 @@ function read(value: string | undefined, fallback = "") {
 }
 
 export const env = {
+  convexUrl: read(process.env.NEXT_PUBLIC_CONVEX_URL),
   supabaseUrl: read(process.env.NEXT_PUBLIC_SUPABASE_URL),
   supabaseAnonKey: read(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
   paystackPublicKey: read(process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY),

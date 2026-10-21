@@ -1,4 +1,5 @@
 "use client";
+import { StartConversation } from "@/features/messaging/StartConversation";
 
 import { Avatar, CardSkeleton, Skeleton, Spinner } from "@/components/ui";
 import { fetchCreatorProfile, type CreatorProfile } from "@/features/profile/api";
@@ -164,6 +165,8 @@ export default function ProfessionalPage() {
       >
         Book
       </button>
+
+      <StartConversation professionalId={profile.id} />
 
       {socials.length > 0 || profile.socials.whatsapp || profile.socials.telephone ? (
         <div className="mt-4 flex flex-wrap justify-center gap-4">
