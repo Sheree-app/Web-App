@@ -28,6 +28,11 @@ import {
   type ConversationReadReceipt,
   type ConversationSummary,
 } from "./lib/views";
+import {
+  derivePresence,
+  presenceIsVisible,
+  presenceRowFor,
+} from "./lib/presence";
 
 const originKindValidator = v.union(
   v.literal("profile"),
@@ -228,6 +233,15 @@ async function summarize(
   const peer = await conversationPeer(ctx, conversation, viewer._id);
   if (!peer) return null;
 
+  const [viewerPresence, peerPresence] = await Promise.all([
+    presenceRowFor(ctx, viewer._id),
+    presenceRowFor(ctx, peer.userId),
+  ]);
+  const visiblePeerPresence =
+    presenceIsVisible(viewerPresence) && presenceIsVisible(peerPresence)
+      ? derivePresence(peerPresence, Date.now())
+      : null;
+
   const state = await ctx.db
     .query("readStates")
     .withIndex("by_conversation_user", (q) =>
@@ -250,6 +264,7 @@ async function summarize(
     viewerRole,
     viewerDisplayName: identityForRole(viewer, viewerRole).displayName,
     context: conversation.context ?? "professional_contact",
+    peerPresence: visiblePeerPresence,
   };
 }
 
