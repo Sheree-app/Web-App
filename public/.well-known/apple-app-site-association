@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "R2GN9224T5.com.raphaelwright.sheree",
+        "paths": [
+          "/post/*",
+          "/professional/*",
+          "/services/*",
+          "/collection/*"
+        ]
+      }
+    ]
+  }
+}

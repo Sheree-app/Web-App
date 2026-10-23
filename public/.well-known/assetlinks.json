@@ -1,0 +1,11 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.raphaelwright.sheree",
+      "sha256_cert_fingerprints":
+        ["D8:9D:27:7D:C1:32:1C:C9:B5:0C:E4:C1:9C:30:E1:15:63:36:22:B2:11:F3:2D:6D:AC:29:D0:32:A3:9D:DE:57"]
+    }
+  }
+]
