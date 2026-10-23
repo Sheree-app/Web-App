@@ -1,9 +1,12 @@
 "use client";
 
 import { Avatar } from "@/components/ui";
+import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import { reportPost } from "@/features/feed/api";
 import type { FeedPost } from "@/features/feed/types";
+import { FeedVideo } from "@/features/feed/FeedVideo";
 import { cn } from "@/lib/utils";
+import { OfficialBeauticianArtwork } from "@/features/badges/artwork";
 import { BadgeCheck, Ellipsis, Sparkles } from "lucide-react";
 import Image from "next/image";
 import { memo, useState } from "react";
@@ -55,21 +58,32 @@ function Component({ post, onOpen, onCreator, onReported }: Props) {
         className="relative overflow-hidden rounded-panel bg-secondary"
         style={{ aspectRatio: `${ratio}` }}
       >
-        <button
-          type="button"
-          onClick={() => onOpen(post)}
-          className="absolute inset-0 transition active:scale-[.995]"
-          aria-label={`Open ${post.professionalName}'s post`}
-        >
-          <Image
-            src={post.imageUrl}
-            alt={post.caption || `${post.category} by ${post.professionalName}`}
-            fill
-            sizes="(min-width: 1280px) 290px, (min-width: 1024px) 23vw, 48vw"
-            className="object-cover"
+        {post.videoUrl ? (
+          <FeedVideo
+            posterUrl={post.imageUrl}
+            videoUrl={post.videoUrl}
+            durationMs={post.videoDurationMs}
+            aspectRatio={ratio}
+            onOpen={() => onOpen(post)}
+            className="absolute inset-0 rounded-panel"
           />
-        </button>
-        <span className="pointer-events-none absolute top-2 left-2 flex min-h-[27px] max-w-[78%] items-center gap-1 rounded-full bg-raised/95 px-2.5 py-[5px] backdrop-blur-sm">
+        ) : (
+          <button
+            type="button"
+            onClick={() => onOpen(post)}
+            className="absolute inset-0 transition active:scale-[.995]"
+            aria-label={`Open ${post.professionalName}'s post`}
+          >
+            <Image
+              src={post.imageUrl}
+              alt={post.caption || `${post.category} by ${post.professionalName}`}
+              fill
+              sizes="(min-width: 1280px) 290px, (min-width: 1024px) 23vw, 48vw"
+              className="object-cover"
+            />
+          </button>
+        )}
+        <span className="pointer-events-none absolute top-2 left-2 z-20 flex min-h-[27px] max-w-[78%] items-center gap-1 rounded-full bg-raised/95 px-2.5 py-[5px] backdrop-blur-sm">
           <Sparkles aria-hidden className="size-[11px] shrink-0 text-primary" />
           <span className="truncate text-[10px] leading-[13px] font-bold text-ink">
             {post.category}
@@ -78,19 +92,34 @@ function Component({ post, onOpen, onCreator, onReported }: Props) {
       </div>
 
       <figcaption className="flex min-h-[42px] items-center gap-2 px-1">
-        <button
-          type="button"
-          onClick={() => onCreator(post)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        >
-          <Avatar name={post.professionalName} src={post.avatarUrl} size={28} />
-          <span className="truncate text-[11px] leading-[15px] font-bold text-ink">
-            {post.professionalName}
-          </span>
-          {post.verified ? (
-            <BadgeCheck aria-label="Verified" className="size-3.5 shrink-0 text-success" />
+        <div className="flex min-w-0 flex-1 items-center gap-[3px]">
+          <button
+            type="button"
+            onClick={() => onCreator(post)}
+            className="flex min-w-0 items-center gap-1.5 text-left"
+          >
+            <Avatar name={post.professionalName} src={post.avatarUrl} size={28} />
+            <span className="truncate text-[11px] leading-[15px] font-bold text-ink">
+              {post.professionalName}
+            </span>
+            {post.verified ? (
+              <BadgeCheck
+                aria-label="Verified Professional"
+                className="size-3.5 shrink-0 text-success"
+              />
+            ) : null}
+          </button>
+          <FoundingBadge
+            founding={post.founding}
+            professionalId={post.professionalId}
+            size={15}
+          />
+          {post.official ? (
+            <span role="img" aria-label="Sheree official" title="Sheree official" className="inline-flex">
+              <OfficialBeauticianArtwork size={15} />
+            </span>
           ) : null}
-        </button>
+        </div>
 
         <div className="relative">
           <button

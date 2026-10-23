@@ -274,35 +274,43 @@ export default function StudioServicesPage() {
                     key={item.id}
                     type="button"
                     onClick={() => openEditor(item)}
-                    className="flex min-h-[100px] items-center gap-3 rounded-card bg-surface p-4 text-left shadow-card transition active:scale-[.995] active:opacity-80"
+                    className="flex flex-col gap-2.5 rounded-card bg-surface p-4 text-left shadow-card transition active:scale-[.995] active:opacity-80"
                   >
-                    <span
-                      aria-hidden
-                      className={
-                        item.active ? "size-2 shrink-0 rounded-full bg-success" : "size-2 shrink-0 rounded-full bg-muted"
-                      }
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[16px] leading-6 font-bold text-ink">
-                        {item.name}
-                      </span>
-                      <span className="block text-caption text-muted">
-                        {duration(item.durationMinutes)} · {DEPOSIT_PERCENT}% deposit
-                      </span>
+                    <span className="flex w-full items-center gap-3">
                       <span
+                        aria-hidden
                         className={
-                          item.active
-                            ? "mt-0.5 block text-[10px] font-bold text-success"
-                            : "mt-0.5 block text-[10px] font-bold text-muted"
+                          item.active ? "size-2 shrink-0 rounded-full bg-success" : "size-2 shrink-0 rounded-full bg-muted"
                         }
-                      >
-                        {item.active ? "Live" : "Paused"}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[16px] leading-6 font-bold text-ink">
+                          {item.name}
+                        </span>
+                        <span className="block truncate text-caption text-muted">
+                          {duration(item.durationMinutes)} · {DEPOSIT_PERCENT}% deposit
+                        </span>
+                        <span
+                          className={
+                            item.active
+                              ? "mt-0.5 block text-[10px] font-bold text-success"
+                              : "mt-0.5 block text-[10px] font-bold text-muted"
+                          }
+                        >
+                          {item.active ? "Live" : "Paused"}
+                        </span>
                       </span>
+                      <span className="flex shrink-0 flex-col items-end text-right">
+                        <span className="text-body font-medium text-ink">{money(item.price)}</span>
+                        <span className="text-[11px] leading-4 text-muted">you receive</span>
+                      </span>
+                      <Pencil aria-hidden className="size-[18px] shrink-0 text-muted" />
                     </span>
-                    <span className="flex shrink-0 flex-col items-end gap-3">
-                      <span className="text-body font-medium text-ink">{money(item.price)} you receive</span>
-                      <span className="text-caption text-muted">Customer pays {customerPrice(item.price)}. Sheree&apos;s {Number((config.service_fee_rate * 100).toFixed(4))}% service fee is added on top; it never comes out of your price.</span>
-                      <Pencil aria-hidden className="size-[18px] text-muted" />
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line/60 pt-2.5 text-[11px] leading-4 text-muted">
+                      <span>Customer pays {customerPrice(item.price)}</span>
+                      <span>
+                        {Number((config.service_fee_rate * 100).toFixed(4))}% Sheree fee included
+                      </span>
                     </span>
                   </button>
                 ))}

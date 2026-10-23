@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { ArrowLeft, Check, CheckCheck, Send } from "lucide-react";
 import { Avatar, Spinner } from "@/components/ui";
+import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -15,7 +16,7 @@ export function Conversation({ conversationId }: { conversationId: string }) {
   if (conversation === undefined) return <div className="flex justify-center p-12"><Spinner label="Loading conversation" /></div>;
   if (!conversation) return <MessagingState title="Conversation unavailable" detail="This conversation may no longer exist, or you may not have access to it." />;
   return <section className="mx-auto max-w-3xl overflow-hidden rounded-card border border-line bg-surface">
-    <header className="flex items-center gap-3 border-b border-line p-4"><Link href="/messages" aria-label="Back to messages" className="rounded-full p-2 hover:bg-tint"><ArrowLeft className="size-5" /></Link><Avatar name={conversation.peer.displayName} src={conversation.peer.avatarUrl} size={40} /><div className="min-w-0"><h1 className="truncate text-title text-ink">{conversation.peer.displayName}</h1><p className="text-caption text-muted">{conversation.viewerRole === "customer" ? "Your professional" : "Your customer"}</p></div></header>
+    <header className="flex items-center gap-3 border-b border-line p-4"><Link href="/messages" aria-label="Back to messages" className="rounded-full p-2 hover:bg-tint"><ArrowLeft className="size-5" /></Link><Avatar name={conversation.peer.displayName} src={conversation.peer.avatarUrl} size={40} /><div className="min-w-0"><h1 className="flex items-center gap-[3px] truncate text-title text-ink"><span className="truncate">{conversation.peer.displayName}</span><FoundingBadge userId={conversation.peer.externalId} size={16} /></h1><p className="text-caption text-muted">{conversation.viewerRole === "customer" ? "Your professional" : "Your customer"}</p></div></header>
     <MessageHistory conversationId={id} />
   </section>;
 }

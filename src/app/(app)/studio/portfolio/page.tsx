@@ -262,6 +262,11 @@ export default function StudioPortfolioPage() {
               >
                 <span className="relative h-24 w-[92px] shrink-0 overflow-hidden rounded-field bg-secondary">
                   <Image src={post.imageUrl} alt="" fill sizes="92px" className="object-cover" />
+                  {post.videoUrl ? (
+                    <span className="absolute inset-x-0 bottom-0 bg-[rgb(35_28_30/0.72)] py-0.5 text-center text-[8px] font-bold tracking-[1px] text-surface">
+                      CLIP
+                    </span>
+                  ) : null}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="line-clamp-2 text-body font-medium text-ink">{post.caption}</span>

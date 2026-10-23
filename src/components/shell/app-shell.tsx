@@ -2,7 +2,7 @@
 
 import { MessageLink } from "@/features/messaging/MessageLink";
 import { Wordmark } from "@/components/brand/wordmark";
-import { BottomNav, TopNav } from "@/components/shell/bottom-nav";
+import { BottomNav, SidebarNav } from "@/components/shell/bottom-nav";
 import { Avatar } from "@/components/ui";
 import {
   markNotificationOpened,
@@ -14,19 +14,30 @@ import { useAuth } from "@/providers/auth-provider";
 import { cn } from "@/lib/utils";
 import { Bell, Repeat } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
 /**
  * The signed-in frame: header, content column and role-aware navigation.
  *
- * Mobile keeps the thumb bar fixed to the bottom; from `md` up the same items
- * move into the header and the content column is centred, so the app reads as a
- * considered web layout rather than a stretched phone.
+ * Mobile keeps the thumb bar fixed to the bottom; from `md` up the items move
+ * into a fixed, icon-only left rail (Instagram-style) and the content column
+ * shifts beside it, so the app reads as a considered web layout rather than a
+ * stretched phone.
  */
 export function AppShell({ children, className }: { children: ReactNode; className?: string }) {
   const { appMode, unreadCount, avatarUrl, username, signedIn } = useAppShellAuth();
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Discover keeps its full-bleed masonry. A professional's profile also uses
+  // the full content width so its four-column work grid gets real estate; its
+  // header and review copy stay in a readable column inside the page. Every
+  // other screen reads as a centred column at feed width.
+  const fullBleed =
+    pathname === "/discover" ||
+    pathname === "/home" ||
+    pathname.startsWith("/professional/");
 
   // Web Push keeps working while the app is open: clicking a notification should
   // move the current tab, and a subscription the browser rotated has to be saved
@@ -50,17 +61,15 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-30 border-b border-line/60 bg-background/92 pt-safe backdrop-blur-md">
-        <div className="mx-auto flex h-14 w-full max-w-[520px] items-center gap-3 px-4 md:h-18 md:max-w-7xl md:px-8">
+      <SidebarNav mode={appMode} />
+      <header className="sticky top-0 z-30 border-b border-line/60 bg-background/92 pt-safe backdrop-blur-md md:hidden">
+        <div className="mx-auto flex h-14 w-full max-w-[520px] items-center gap-3 px-4">
           <Link href={appMode === "professional" ? "/studio" : "/home"} aria-label="Sheree home">
             <Wordmark size="sm" />
           </Link>
           <div className="flex-1" />
           {appMode === "professional" ? (
-            <Link
-              href="/mode-transition"
-              className="hidden items-center gap-2 rounded-full bg-tint px-3 py-1.5 text-caption text-ink transition hover:brightness-95 sm:flex"
-            >
+            <Link href="/mode-transition" className="hidden items-center gap-2 rounded-full bg-tint px-3 py-1.5 text-caption text-ink transition hover:brightness-95 sm:flex">
               <Repeat aria-hidden className="size-4" />
               Business mode
             </Link>
@@ -89,19 +98,22 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
             <Avatar name={username} src={avatarUrl} size={34} />
           </Link>
         </div>
-        <nav aria-label="Primary" className="mx-auto hidden w-full max-w-7xl items-center justify-end px-8 pb-3 md:flex">
-          <TopNav mode={appMode} />
-        </nav>
       </header>
 
-      {/* Expand the workspace when navigation moves into the desktop header. */}
       <main
         className={cn(
-          "mx-auto w-full max-w-[520px] flex-1 px-4 pt-4 pb-[calc(100px+env(safe-area-inset-bottom))] md:max-w-7xl md:px-8 md:pt-8 md:pb-12",
+          "flex-1 px-4 pt-4 pb-[calc(100px+env(safe-area-inset-bottom))] md:pt-10 md:pb-12 md:pr-10 md:pl-[calc(76px+2.5rem)] lg:pr-14 lg:pl-[calc(76px+3.5rem)]",
           className,
         )}
       >
-        {children}
+        <div
+          className={cn(
+            "mx-auto w-full max-w-[520px]",
+            fullBleed ? "md:max-w-none" : "md:max-w-[720px]",
+          )}
+        >
+          {children}
+        </div>
       </main>
 
       <BottomNav mode={appMode} />

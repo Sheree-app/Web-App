@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 import type { MediaVariantName, UploadedMedia } from "./types";
+import { parseCloudinaryUrl } from "./video-urls";
 
 const CDN_BASE = env.r2PublicBaseUrl.replace(/\/$/, "");
 const SUPABASE_SUFFIX = "/storage/v1/object/public/";
@@ -33,7 +34,8 @@ export function thumbnailUrl(media: UploadedMedia): string {
 
 type IdentifiedR2 = { provider: "r2"; key: string };
 type IdentifiedSupabase = { provider: "supabase"; bucket: "avatars" | "portfolio"; key: string };
-export type IdentifiedMedia = IdentifiedR2 | IdentifiedSupabase;
+type IdentifiedCloudinary = { provider: "cloudinary"; publicId: string };
+export type IdentifiedMedia = IdentifiedR2 | IdentifiedSupabase | IdentifiedCloudinary;
 
 /**
  * Extracts a deletable reference from any known public media URL (R2 CDN or
@@ -41,6 +43,12 @@ export type IdentifiedMedia = IdentifiedR2 | IdentifiedSupabase;
  */
 export function identifyMedia(url: string): IdentifiedMedia | null {
   if (!url) return null;
+
+  // Cloudinary clips are deleted through the same Edge Function, routed to the
+  // Cloudinary Admin API instead of R2.
+  const cloudinary = parseCloudinaryUrl(url);
+  if (cloudinary) return { provider: "cloudinary", publicId: cloudinary.publicId };
+
   if (CDN_BASE && url.startsWith(`${CDN_BASE}/`)) {
     return { provider: "r2", key: decodeURIComponent(url.slice(CDN_BASE.length + 1)) };
   }
@@ -67,6 +75,7 @@ export function identifyScopedMedia(
 ): { provider: "r2" | "supabase"; key: string } | null {
   const identified = identifyMedia(url);
   if (!identified) return null;
+  if (identified.provider === "cloudinary") return null;
   if (identified.provider === "r2") return identified;
   if (identified.bucket !== scope) return null;
   return identified;

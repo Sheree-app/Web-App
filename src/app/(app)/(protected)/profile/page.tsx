@@ -2,6 +2,9 @@
 
 import { Avatar, Sheet, Skeleton, Spinner } from "@/components/ui";
 import { ModeSwitchCard } from "@/features/account/ModeSwitchCard";
+import { FoundingBadge } from "@/features/badges/FoundingBadge";
+import { FoundingStatusCard } from "@/features/badges/FoundingStatusCard";
+import { fetchMyFoundingStatus, type MyFoundingStatus } from "@/features/badges/my-status";
 import {
   fetchAccountProfile,
   fetchOwnProfessionalId,
@@ -54,6 +57,7 @@ export default function ProfilePage() {
 
   const [account, setAccount] = useState<AccountProfile | null>(null);
   const [professionalId, setProfessionalId] = useState<string | null>(null);
+  const [foundingStatus, setFoundingStatus] = useState<MyFoundingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -73,11 +77,17 @@ export default function ProfilePage() {
       accountRole === "professional"
         ? fetchOwnProfessionalId(user.id).catch(() => null)
         : Promise.resolve(null),
+      // The detailed account experience comes from `get_my_founding_status`,
+      // never from the public boolean alone.
+      accountRole === "professional"
+        ? fetchMyFoundingStatus().catch(() => null)
+        : Promise.resolve(null),
     ])
-      .then(([nextAccount, nextProfessionalId]) => {
+      .then(([nextAccount, nextProfessionalId, nextFounding]) => {
         if (!active) return;
         setAccount(nextAccount);
         setProfessionalId(nextProfessionalId);
+        setFoundingStatus(nextFounding);
         setDraft(
           Object.fromEntries(
             Object.entries(nextAccount.socials).map(([key, value]) => [
@@ -278,8 +288,17 @@ export default function ProfilePage() {
                 )}
               </button>
             </div>
-            <p className="text-section text-ink">
-              {accountRole === "professional" && account.business ? account.business : account.name}
+            <p className="flex items-center gap-1">
+              <span className="text-section text-ink">
+                {accountRole === "professional" && account.business ? account.business : account.name}
+              </span>
+              {accountRole === "professional" ? (
+                <FoundingBadge
+                  founding={foundingStatus ? foundingStatus.isFounding : undefined}
+                  professionalId={professionalId}
+                  size={18}
+                />
+              ) : null}
             </p>
             <p className="text-caption text-muted">{account.email}</p>
             {accountRole === "professional" ? (
@@ -295,6 +314,10 @@ export default function ProfilePage() {
           </>
         )}
       </section>
+
+      {accountRole === "professional" ? (
+        <FoundingStatusCard status={foundingStatus} />
+      ) : null}
 
       {rows.map((section) => (
         <section key={section.label} className="mt-8 flex flex-col gap-1">

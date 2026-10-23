@@ -2,6 +2,7 @@
 import { CustomerPrice } from "@/providers/pricing-provider";
 
 import { Avatar, Sheet, Spinner, Textarea } from "@/components/ui";
+import { ProfessionalName } from "@/features/badges/ProfessionalName";
 import {
   createPostComment,
   fetchPostById,
@@ -10,6 +11,7 @@ import {
   setFeedReaction,
   type PostImage,
 } from "@/features/feed/api";
+import { FeedVideo } from "@/features/feed/FeedVideo";
 import type { FeedPost } from "@/features/feed/types";
 import { timeAgo } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
@@ -17,7 +19,6 @@ import { useToast } from "@/providers/toast-provider";
 import {
   ArrowLeft,
   ArrowRight,
-  BadgeCheck,
   Bookmark,
   CalendarDays,
   Heart,
@@ -280,14 +281,16 @@ export default function PostPage() {
             <span className="block text-[9px] leading-[14px] font-bold tracking-[1.5px] text-muted uppercase">
               Created by
             </span>
-            <span className="flex items-center gap-1.5">
-              <span className="truncate text-[14px] leading-[19px] font-bold text-ink">
-                {post.professionalName}
-              </span>
-              {post.verified ? (
-                <BadgeCheck aria-label="Verified" className="size-[15px] shrink-0 text-success" />
-              ) : null}
-            </span>
+            <ProfessionalName
+              name={post.professionalName}
+              professionalId={post.professionalId}
+              verified={post.verified}
+              founding={post.founding}
+              official={post.official}
+              size={15}
+              interactive={false}
+              nameClassName="text-[14px] leading-[19px] font-bold text-ink"
+            />
           </span>
         </button>
 
@@ -310,51 +313,67 @@ export default function PostPage() {
         </button>
       </div>
 
-      {/* Full-bleed gallery, exactly as the phone renders it. */}
-      <div
-        className="relative -mx-4 max-h-[650px] min-h-[430px] w-[calc(100%+2rem)] md:mx-auto md:w-full md:max-w-3xl md:rounded-card overflow-hidden bg-secondary"
-        style={{ aspectRatio: `${ratio}` }}
-      >
-        <div
-          ref={galleryRef}
-          onScroll={onGalleryScroll}
-          className="no-scrollbar flex size-full snap-x snap-mandatory overflow-x-auto"
-        >
-          {gallery.map((item, index) => (
-            <div key={item.id} className="relative size-full shrink-0 snap-center">
-              <Image
-                src={item.imageUrl}
-                alt={`${post.caption || post.category} — picture ${index + 1} of ${gallery.length}`}
-                fill
-                sizes="(min-width: 768px) 768px, 100vw"
-                priority={index === 0}
-                className="object-cover"
-              />
-            </div>
-          ))}
+      {/* A clip replaces the gallery: poster first, then a larger player with
+          native transport controls and sound. */}
+      {post.videoUrl ? (
+        <div className="-mx-4 w-[calc(100%+2rem)] md:mx-auto md:w-full md:max-w-3xl">
+          <FeedVideo
+            posterUrl={post.imageUrl}
+            videoUrl={post.videoUrl}
+            durationMs={post.videoDurationMs}
+            aspectRatio={post.aspectRatio}
+            autoplay={false}
+            controls
+            className="md:rounded-card"
+          />
         </div>
-
-        {gallery.length > 1 ? (
-          <>
-            <span className="absolute top-3 right-3 flex h-[30px] items-center gap-1.5 rounded-full bg-[rgb(35_28_38/0.68)] px-2.5 text-[11px] font-bold text-background">
-              <Images aria-hidden className="size-3.5" />
-              {activeImage + 1}/{gallery.length}
-            </span>
-            <span className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5">
-              {gallery.map((item, index) => (
-                <span
-                  key={item.id}
-                  className={
-                    index === activeImage
-                      ? "h-1.5 w-[18px] rounded-full bg-background"
-                      : "size-1.5 rounded-full bg-white/55"
-                  }
+      ) : (
+        /* Full-bleed gallery, exactly as the phone renders it. */
+        <div
+          className="relative -mx-4 max-h-[650px] min-h-[430px] w-[calc(100%+2rem)] md:mx-auto md:w-full md:max-w-3xl md:rounded-card overflow-hidden bg-secondary"
+          style={{ aspectRatio: `${ratio}` }}
+        >
+          <div
+            ref={galleryRef}
+            onScroll={onGalleryScroll}
+            className="no-scrollbar flex size-full snap-x snap-mandatory overflow-x-auto"
+          >
+            {gallery.map((item, index) => (
+              <div key={item.id} className="relative size-full shrink-0 snap-center">
+                <Image
+                  src={item.imageUrl}
+                  alt={`${post.caption || post.category} — picture ${index + 1} of ${gallery.length}`}
+                  fill
+                  sizes="(min-width: 768px) 768px, 100vw"
+                  priority={index === 0}
+                  className="object-cover"
                 />
-              ))}
-            </span>
-          </>
-        ) : null}
-      </div>
+              </div>
+            ))}
+          </div>
+
+          {gallery.length > 1 ? (
+            <>
+              <span className="absolute top-3 right-3 flex h-[30px] items-center gap-1.5 rounded-full bg-[rgb(35_28_38/0.68)] px-2.5 text-[11px] font-bold text-background">
+                <Images aria-hidden className="size-3.5" />
+                {activeImage + 1}/{gallery.length}
+              </span>
+              <span className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5">
+                {gallery.map((item, index) => (
+                  <span
+                    key={item.id}
+                    className={
+                      index === activeImage
+                        ? "h-1.5 w-[18px] rounded-full bg-background"
+                        : "size-1.5 rounded-full bg-white/55"
+                    }
+                  />
+                ))}
+              </span>
+            </>
+          ) : null}
+        </div>
+      )}
 
       <div className="px-2">
         <div className="flex min-h-[58px] items-center border-y border-line">

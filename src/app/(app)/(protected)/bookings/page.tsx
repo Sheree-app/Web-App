@@ -3,6 +3,7 @@ import { usePricing } from "@/providers/pricing-provider";
 import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 
 import { Avatar, RowSkeleton, Sheet } from "@/components/ui";
+import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import { cancelCustomerBooking, fetchCustomerBookings } from "@/features/booking/api";
 import { formatTime12 } from "@/features/booking/time-format";
 import { useToast } from "@/providers/toast-provider";
@@ -261,8 +262,11 @@ export default function BookingsPage() {
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <Avatar name={selected.professionalName} src={selected.avatarUrl} size={22} />
-              <span className="min-w-0 flex-1 truncate text-caption text-muted">
-                {selected.professionalName}
+              <span className="flex min-w-0 flex-1 items-center gap-[3px]">
+                <span className="truncate text-caption text-muted">
+                  {selected.professionalName}
+                </span>
+                <FoundingBadge professionalId={selected.professionalId} size={14} />
               </span>
               <span
                 aria-hidden
@@ -450,9 +454,13 @@ function BookingCard({
           <span className="block truncate text-title font-medium text-ink">
             {booking.serviceName}
           </span>
-          <span className="mt-1 flex items-center gap-2">
+          <span className="mt-1 flex min-w-0 items-center gap-1.5">
             <Avatar name={booking.professionalName} src={booking.avatarUrl} size={24} />
-            <span className="truncate text-caption text-muted">{booking.professionalName}</span>
+            <span className="flex min-w-0 items-center gap-[3px]">
+              <span className="truncate text-caption text-muted">{booking.professionalName}</span>
+              {/* The whole card is a button, so the badge stays presentational. */}
+              <FoundingBadge professionalId={booking.professionalId} size={14} interactive={false} />
+            </span>
           </span>
         </span>
 

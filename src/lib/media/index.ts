@@ -20,3 +20,39 @@ export {
   MediaValidationError,
   validateMediaAsset,
 } from "./validation";
+
+// Feed clips (Cloudinary) — the poster still travels through `uploadMedia`.
+export {
+  cloudinaryHlsUrl,
+  cloudinaryProgressiveUrl,
+  cloudinaryPublicId,
+  isCloudinaryUrl,
+  parseCloudinaryUrl,
+  videoDeliveryUrls,
+  PROGRESSIVE_WIDTH,
+  PROGRESSIVE_WIDTH_DATA_SAVER,
+} from "./video-urls";
+export {
+  completeVideoUpload,
+  deleteCloudinaryVideo,
+  formatClipDuration,
+  generateVideoPoster,
+  isSupportedVideoFile,
+  MAX_VIDEO_BYTES,
+  MAX_VIDEO_DURATION_MS,
+  MIN_VIDEO_DURATION_MS,
+  measureVideo,
+  posterAsset,
+  posterCaptureTime,
+  posterSize,
+  prepareVideo,
+  requestVideoUploadTicket,
+  resolveVideoMime,
+  uploadVideo,
+  uploadVideoToCloudinary,
+  validateVideoClip,
+  VideoProcessingError,
+  VideoUploadError,
+  VideoValidationError,
+  VIDEO_MESSAGES,
+} from "./video";

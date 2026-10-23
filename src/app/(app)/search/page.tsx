@@ -2,6 +2,7 @@
 import { CustomerPrice, usePricing } from "@/providers/pricing-provider";
 
 import { Skeleton } from "@/components/ui";
+import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import { searchMarketplace, type PriceSort, type SearchKind, type SearchResult } from "@/features/search/api";
 import {
   ArrowDown,
@@ -309,10 +310,17 @@ function ResultCard({ item }: { item: SearchResult }) {
 
       <span className="min-w-0 flex-1">
         <span className="block text-eyebrow text-muted uppercase">{item.kind}</span>
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-[3px]">
           <span className="truncate text-title text-ink">{item.title}</span>
           {item.verified ? (
-            <BadgeCheck aria-hidden className="size-4 shrink-0 text-success" />
+            <BadgeCheck aria-label="Verified Professional" className="size-4 shrink-0 text-success" />
+          ) : null}
+          {item.professionalId ? (
+            <FoundingBadge
+              professionalId={item.professionalId}
+              size={15}
+              interactive={false}
+            />
           ) : null}
         </span>
         <span className="block truncate text-caption text-muted">{item.subtitle}</span>

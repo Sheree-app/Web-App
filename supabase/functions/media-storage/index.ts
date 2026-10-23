@@ -37,6 +37,19 @@ const VARIANTS = {
 type VariantName = keyof typeof VARIANTS;
 const isVariantName = (value: string): value is VariantName => value in VARIANTS;
 
+// Clips. Mirrors `feed_posts_video_check`, the device-side validator and the
+// `media` table constraints: 500 ms – 12 s, 50 MB, MP4/MOV only.
+const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+const VIDEO_MIN_DURATION_MS = 500;
+const VIDEO_MAX_DURATION_MS = 12_000;
+const VIDEO_TICKET_EXPIRES_SECONDS = 60;
+const CLOUDINARY_MIME = new Set(["video/mp4", "video/quicktime"]);
+const VIDEO_MIME_ALIASES: Record<string, string> = {
+  "video/m4v": "video/mp4",
+  "video/x-m4v": "video/mp4",
+  "video/mov": "video/quicktime",
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -50,6 +63,12 @@ function json(body: unknown, status = 200) {
 
 function uuid(): string {
   return crypto.randomUUID();
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
 }
 
 function publicUrlFor(baseUrl: string, key: string): string {
@@ -78,6 +97,138 @@ interface VariantInput {
   size: number;
   width: number;
   height: number;
+}
+
+interface VideoClipInput {
+  mimeType: string;
+  size: number;
+  width: number;
+  height: number;
+  durationMs: number;
+}
+
+function normalizeVideoMime(raw: unknown): string | null {
+  const value = String(raw ?? "").split(";")[0].trim().toLowerCase();
+  if (!value) return null;
+  const mime = VIDEO_MIME_ALIASES[value] ?? value;
+  return CLOUDINARY_MIME.has(mime) ? mime : null;
+}
+
+/**
+ * The server-side boundary for clips. The browser validates and measures too,
+ * but a hand-rolled call must not be able to publish a WebM, a 40-second clip,
+ * or a 90 MB file.
+ */
+function validateVideoClip(input: unknown): VideoClipInput | string {
+  if (!input || typeof input !== "object") return "clip is required";
+  const clip = input as Record<string, unknown>;
+
+  const mimeType = normalizeVideoMime(clip.mimeType);
+  if (!mimeType) return "Clips have to be MP4 or MOV";
+
+  const size = Number(clip.size);
+  if (!Number.isFinite(size) || size <= 0) return "clip size is invalid";
+  if (size > VIDEO_MAX_BYTES) return "That clip is larger than 50 MB";
+
+  const durationMs = Number(clip.durationMs);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return "clip duration is invalid";
+  if (durationMs < VIDEO_MIN_DURATION_MS) return "That clip is too short to show anything";
+  if (durationMs > VIDEO_MAX_DURATION_MS) return "Choose a clip of 12 seconds or less";
+
+  const width = Math.round(Number(clip.width));
+  const height = Math.round(Number(clip.height));
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    return "clip dimensions are invalid";
+  }
+
+  return { mimeType, size, width, height, durationMs: Math.round(durationMs) };
+}
+
+interface CloudinaryConfig {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
+function cloudinaryConfig(): CloudinaryConfig | null {
+  const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME");
+  const apiKey = Deno.env.get("CLOUDINARY_API_KEY");
+  const apiSecret = Deno.env.get("CLOUDINARY_API_SECRET");
+  if (!cloudName || !apiKey || !apiSecret) return null;
+  return { cloudName, apiKey, apiSecret };
+}
+
+async function sha1Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Cloudinary signatures are SHA-1 over alphabetically sorted `key=value` pairs
+ * (excluding `file`, `api_key` and `resource_type`) followed by the API secret.
+ * The secret never leaves this function.
+ */
+async function cloudinarySignature(
+  params: Record<string, string>,
+  apiSecret: string,
+): Promise<string> {
+  const toSign = Object.keys(params)
+    .sort()
+    .map((key) => `${key}=${params[key]}`)
+    .join("&");
+  return sha1Hex(`${toSign}${apiSecret}`);
+}
+
+function cloudinaryAuthHeader(config: CloudinaryConfig): string {
+  return `Basic ${btoa(`${config.apiKey}:${config.apiSecret}`)}`;
+}
+
+/** Confirms Cloudinary actually holds the asset before we persist metadata. */
+async function cloudinaryVideoExists(
+  config: CloudinaryConfig,
+  publicId: string,
+): Promise<boolean> {
+  const endpoint =
+    `https://api.cloudinary.com/v1_1/${config.cloudName}/resources/video/upload/` +
+    encodeURIComponent(publicId);
+  const response = await fetch(endpoint, {
+    headers: { Authorization: cloudinaryAuthHeader(config) },
+  });
+  return response.ok;
+}
+
+/** Destroys one Cloudinary clip. Deleting a missing asset is a success. */
+async function cloudinaryDestroy(
+  config: CloudinaryConfig,
+  publicId: string,
+): Promise<void> {
+  const params = {
+    invalidate: "true",
+    public_id: publicId,
+    timestamp: String(Math.floor(Date.now() / 1000)),
+  };
+  const body = new URLSearchParams({
+    ...params,
+    api_key: config.apiKey,
+    signature: await cloudinarySignature(params, config.apiSecret),
+  });
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${config.cloudName}/video/destroy`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    },
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const message =
+      (payload as { error?: { message?: string } } | null)?.error?.message ??
+      `Cloudinary destroy failed (${response.status})`;
+    // "not found" is the desired end state.
+    if (/not found/i.test(message)) return;
+    throw new Error(message);
+  }
 }
 
 function validateVariant(input: unknown): VariantInput | string {
@@ -157,6 +308,45 @@ Deno.serve(async (request) => {
         if (!profile) return json({ error: "Business profile required for this upload" }, 403);
       }
 
+      // Clips get a signed Cloudinary ticket instead of R2 presigned URLs.
+      // Only the signature, timestamp and public id are signed; the secret
+      // stays here and is never returned to the browser.
+      if (String(body.kind || "") === "video") {
+        if (String(body.provider || "cloudinary") !== "cloudinary") {
+          return json({ error: "Clips are stored in Cloudinary" }, 400);
+        }
+        const config = cloudinaryConfig();
+        if (!config) return json({ error: "Cloudinary is not configured" }, 503);
+
+        const clip = validateVideoClip(body.clip);
+        if (typeof clip === "string") return json({ error: clip }, 400);
+
+        const mediaId = uuid();
+        const publicId = `${purpose}/${mediaId}`;
+        const timestamp = String(Math.floor(Date.now() / 1000));
+        const signature = await cloudinarySignature(
+          { public_id: publicId, timestamp },
+          config.apiSecret,
+        );
+
+        return json({
+          provider: "cloudinary",
+          kind: "video",
+          mediaId,
+          purpose,
+          cloudName: config.cloudName,
+          uploadUrl: `https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`,
+          fields: {
+            api_key: config.apiKey,
+            timestamp,
+            signature,
+            public_id: publicId,
+          },
+          publicId,
+          expiresIn: VIDEO_TICKET_EXPIRES_SECONDS,
+        });
+      }
+
       const rawVariants = Array.isArray(body.variants) ? body.variants : [];
       if (!rawVariants.length) return json({ error: "At least one variant is required" }, 400);
 
@@ -218,6 +408,60 @@ Deno.serve(async (request) => {
       if (!isPurpose(purpose)) return json({ error: "Invalid media purpose" }, 400);
       if (!mediaId) return json({ error: "mediaId is required" }, 400);
 
+      if (String(body.kind || "") === "video") {
+        const config = cloudinaryConfig();
+        if (!config) return json({ error: "Cloudinary is not configured" }, 503);
+
+        const publicId = String(body.publicId || "");
+        if (!publicId) return json({ error: "publicId is required" }, 400);
+        // Only ids this function issued for this purpose are accepted.
+        if (!publicId.startsWith(`${purpose}/`)) {
+          return json({ error: "Invalid publicId" }, 400);
+        }
+
+        const clip = validateVideoClip(body.clip);
+        if (typeof clip === "string") return json({ error: clip }, 400);
+
+        // Never persist metadata for an asset Cloudinary does not actually hold.
+        const exists = await cloudinaryVideoExists(config, publicId);
+        if (!exists) return json({ error: "The clip was not uploaded" }, 409);
+
+        // Retried confirmations are idempotent.
+        const { data: existing, error: existingError } = await supabase
+          .from("media")
+          .select()
+          .eq("id", mediaId)
+          .maybeSingle();
+        if (existingError) throw existingError;
+        if (existing) return json({ provider: "cloudinary", media: existing });
+
+        const { data: record, error: insertError } = await supabase
+          .from("media")
+          .insert({
+            id: mediaId,
+            user_id: user.id,
+            provider: "cloudinary",
+            bucket_key: publicId,
+            media_type: purpose,
+            mime_type: clip.mimeType,
+            width: clip.width,
+            height: clip.height,
+            duration_ms: clip.durationMs,
+            variants: {
+              original: {
+                bucket_key: publicId,
+                width: clip.width,
+                height: clip.height,
+              },
+            },
+          })
+          .select()
+          .single();
+        if (insertError) throw insertError;
+
+        return json({ provider: "cloudinary", media: record });
+      }
+
       const rawVariants = Array.isArray(body.variants) ? body.variants : [];
       if (!rawVariants.length) return json({ error: "At least one variant is required" }, 400);
 
@@ -267,12 +511,54 @@ Deno.serve(async (request) => {
     if (action === "delete") {
       const mediaId = String(body.mediaId || "");
       const key = String(body.key || "");
+      const provider = String(body.provider || "");
+
+      // Cloudinary clips are deleted through the Admin API, never through R2.
+      if (provider === "cloudinary") {
+        const config = cloudinaryConfig();
+        if (!config) return json({ error: "Cloudinary is not configured" }, 503);
+
+        const publicId = String(body.publicId || "");
+        if (!publicId) return json({ error: "publicId is required" }, 400);
+
+        // Public ids are `{purpose}/{media id}`. The `media` row is readable
+        // only by its owner, so a hit proves ownership.
+        const mediaIdFromPublicId = publicId.split("/")[1];
+        if (isUuid(mediaIdFromPublicId ?? "")) {
+          const { data: row, error: rowError } = await supabase
+            .from("media")
+            .select("id,bucket_key,provider")
+            .eq("id", mediaIdFromPublicId)
+            .maybeSingle();
+          if (rowError) throw rowError;
+
+          if (row) {
+            if (row.provider !== "cloudinary" && row.bucket_key !== publicId) {
+              return json({ error: "You cannot delete this asset" }, 403);
+            }
+            await cloudinaryDestroy(config, publicId);
+            const { error: deleteError } = await supabase
+              .from("media")
+              .delete()
+              .eq("id", row.id);
+            if (deleteError) throw deleteError;
+            return json({ deleted: true });
+          }
+
+          // No row: a `complete` that never landed (or a rolled-back post).
+          // Removing the unguessable clip is the correct cleanup.
+          await cloudinaryDestroy(config, publicId);
+          return json({ deleted: true });
+        }
+
+        return json({ error: "You cannot delete this asset" }, 403);
+      }
 
       // Preferred: delete by media id. RLS restricts the lookup to the owner.
       if (mediaId) {
         const { data: record, error: recordError } = await supabase
           .from("media")
-          .select("bucket_key,variants")
+          .select("bucket_key,variants,provider")
           .eq("id", mediaId)
           .maybeSingle();
         if (recordError) throw recordError;
@@ -281,6 +567,15 @@ Deno.serve(async (request) => {
           // `complete` persisted metadata. Deletes are idempotent: nothing to
           // remove, so return success and let client-side best-effort cleanup
           // finish silently instead of surfacing "Media not found".
+          return json({ deleted: true });
+        }
+
+        if (record.provider === "cloudinary") {
+          const config = cloudinaryConfig();
+          if (!config) return json({ error: "Cloudinary is not configured" }, 503);
+          await cloudinaryDestroy(config, record.bucket_key);
+          const { error: deleteError } = await supabase.from("media").delete().eq("id", mediaId);
+          if (deleteError) throw deleteError;
           return json({ deleted: true });
         }
 

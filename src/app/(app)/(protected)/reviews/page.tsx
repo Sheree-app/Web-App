@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar } from "@/components/ui";
+import { ProfessionalName } from "@/features/badges/ProfessionalName";
 import { fetchCustomerReviews, type CustomerReview } from "@/features/reviews/api";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -69,7 +70,12 @@ export default function CustomerReviewsPage() {
               <div className="flex items-center gap-3">
                 <Avatar name={item.professionalName} src={item.avatarUrl} size={44} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-body font-medium text-ink">{item.professionalName}</p>
+                  <ProfessionalName
+                    name={item.professionalName}
+                    professionalId={item.professionalId}
+                    size={15}
+                    nameClassName="text-body font-medium text-ink"
+                  />
                   <p className="text-[11px] text-muted">
                     {item.serviceName} ·{" "}
                     {new Date(item.createdAt).toLocaleDateString("en-GB", {

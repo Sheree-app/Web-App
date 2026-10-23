@@ -10,7 +10,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: "Sheree",
     description:
       "Find, compare and book trusted hair, beauty, wellness and grooming professionals near you.",
-    start_url: "/",
+    start_url: "/discover",
     display: "standalone",
     orientation: "portrait",
     background_color: "#FCFAF8",
