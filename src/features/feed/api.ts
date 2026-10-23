@@ -16,6 +16,7 @@ type FeedRow = {
 /** Columns the feed RPCs do not return, fetched once per page. */
 type PostMetaRow = {
   id:string;
+  slug?:string;
   video_url:string|null;
   video_duration_ms:number|null;
   service_id:string|null;
@@ -30,9 +31,22 @@ type ProfileMetaRow = {
 
 export type PostImage={id:string;imageUrl:string;aspectRatio:number;sortOrder:number};
 
+/** Resolve a share slug while keeping legacy UUID links valid. */
+async function resolvePostId(postKey:string):Promise<string>{
+  const {data,error}=await (supabase.rpc as any)('resolve_post_id',{post_key:postKey});
+  if(!error&&data) return String(data);
+
+  // Keep the client usable during a migration rollout where the RPC may not
+  // exist yet, but the slug column is already available.
+  const table=supabase.from('feed_posts' as never) as any;
+  const {data:slugRow}=await table.select('id').eq('slug',postKey).maybeSingle();
+  return slugRow?.id ? String(slugRow.id) : postKey;
+}
+
 export async function fetchPostImages(postId:string):Promise<PostImage[]>{
+  const resolvedPostId=await resolvePostId(postId);
   const table=supabase.from('feed_post_images' as never) as any;
-  const {data,error}=await table.select('id,image_url,aspect_ratio,sort_order').eq('post_id',postId).order('sort_order',{ascending:true});
+  const {data,error}=await table.select('id,image_url,aspect_ratio,sort_order').eq('post_id',resolvedPostId).order('sort_order',{ascending:true});
   if(error)throw error;
   return ((data??[]) as Array<{id:string;image_url:string;aspect_ratio:number;sort_order:number}>).map(item=>({
     id:item.id,imageUrl:item.image_url,aspectRatio:Number(item.aspect_ratio),sortOrder:item.sort_order,
@@ -69,7 +83,7 @@ async function mapFeedRows(rows:FeedRow[]):Promise<FeedPost[]>{
   const profileTable=supabase.from('professional_profiles' as never) as any;
 
   const [postMeta,profileMeta]=await Promise.all([
-    optionalRows<PostMetaRow>(postTable.select('id,video_url,video_duration_ms,service_id').in('id',postIds)),
+    optionalRows<PostMetaRow>(postTable.select('id,slug,video_url,video_duration_ms,service_id').in('id',postIds)),
     optionalRows<ProfileMetaRow>(profileTable.select('id,business_name,is_founding_beautician,is_official').in('id',profileIds)),
   ]);
 
@@ -82,6 +96,7 @@ async function mapFeedRows(rows:FeedRow[]):Promise<FeedPost[]>{
     const businessName=profile?.business_name?.trim();
     return {
       id:row.id,
+      slug:meta?.slug,
       professionalId:row.professional_id,
       // Mobile shows the business name as the public professional name.
       professionalName:businessName||row.professional_name,
@@ -165,12 +180,13 @@ const ENRICHED_POST_SELECT='id,image_url,video_url,video_duration_ms,service_id,
 const BASE_POST_SELECT='id,image_url,caption,price_from,aspect_ratio,rating,rating_count,like_count,comment_count,created_at,professional_profiles!inner(id,display_name,business_name,profile_photo_url,is_verified,location,business_address),interests!inner(name)';
 
 export async function fetchPostById(postId:string):Promise<FeedPost>{
+  const resolvedPostId=await resolvePostId(postId);
   const{data:{user}}=await supabase.auth.getUser();
   const table=supabase.from('feed_posts' as never) as any;
-  let{data,error}=await table.select(ENRICHED_POST_SELECT).eq('id',postId).eq('is_published',true).maybeSingle();
+  let{data,error}=await table.select(`${ENRICHED_POST_SELECT},slug`).eq('id',resolvedPostId).eq('is_published',true).maybeSingle();
   let degraded=false;
   if(error){
-    const fallback=await table.select(BASE_POST_SELECT).eq('id',postId).eq('is_published',true).maybeSingle();
+    const fallback=await table.select(`${BASE_POST_SELECT},slug`).eq('id',resolvedPostId).eq('is_published',true).maybeSingle();
     data=fallback.data;
     error=fallback.error;
     degraded=true;
@@ -181,13 +197,13 @@ export async function fetchPostById(postId:string):Promise<FeedPost>{
   let liked=false,saved=false;
   if(user){
     const[likeRow,saveRow]=await Promise.all([
-      supabase.from('feed_post_likes').select('post_id').eq('post_id',postId).eq('user_id',user.id).maybeSingle(),
-      supabase.from('feed_post_saves').select('post_id').eq('post_id',postId).eq('user_id',user.id).maybeSingle(),
+      supabase.from('feed_post_likes').select('post_id').eq('post_id',resolvedPostId).eq('user_id',user.id).maybeSingle(),
+      supabase.from('feed_post_saves').select('post_id').eq('post_id',resolvedPostId).eq('user_id',user.id).maybeSingle(),
     ]);
     liked=Boolean(likeRow.data);saved=Boolean(saveRow.data);
   }
   return{
-    id:data.id,professionalId:profile.id,
+    id:data.id,slug:data.slug??undefined,professionalId:profile.id,
     professionalName:profile.business_name?.trim()||profile.display_name||profile.business_name,
     avatarUrl:profile.profile_photo_url,imageUrl:data.image_url,
     videoUrl:data.video_url??null,
@@ -241,7 +257,8 @@ export function invalidateFeedQueries(){
 }
 
 export async function fetchPostComments(postId:string,cursor:Cursor|null=null,pageSize=30):Promise<CursorPage<FeedComment>>{
-  const {data,error}=await (supabase.rpc as any)('get_post_comments_page',{post_id_value:postId,cursor_created_at:cursor?.createdAt??null,cursor_id:cursor?.id??null,page_size:pageSize});
+  const resolvedPostId=await resolvePostId(postId);
+  const {data,error}=await (supabase.rpc as any)('get_post_comments_page',{post_id_value:resolvedPostId,cursor_created_at:cursor?.createdAt??null,cursor_id:cursor?.id??null,page_size:pageSize});
   if(error)throw error;
   const rows=(data??[]) as Array<{id:string;post_id:string;user_id:string;parent_id:string|null;body:string;created_at:string;author_name:string;avatar_url:string|null;reply_count:number}>;
   const last=rows.at(-1);

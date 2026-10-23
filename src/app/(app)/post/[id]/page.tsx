@@ -198,7 +198,10 @@ export default function PostPage() {
   };
 
   const share = async () => {
-    const url = typeof window === "undefined" ? "" : window.location.href;
+    const url =
+      typeof window === "undefined"
+        ? ""
+        : `${window.location.origin}/post/${post?.slug ?? postId}`;
     if (typeof navigator !== "undefined" && navigator.share) {
       await navigator
         .share({

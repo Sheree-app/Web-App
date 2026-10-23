@@ -123,7 +123,7 @@ export default function BookmarksPage() {
               <FeedCard
                 key={post.id}
                 post={post}
-                onOpen={(item) => router.push(`/post/${item.id}`)}
+                onOpen={(item) => router.push(`/post/${item.slug ?? item.id}`)}
                 onCreator={(item) => router.push(`/professional/${item.professionalId}`)}
               />
             ))}
