@@ -10,13 +10,19 @@ import {
   fetchAvailability,
   fetchBookingFulfilment,
   fetchBookingSlots,
+  fetchConversationPriceCard,
+  fetchCustomBookingSlots,
   initializeDeposit,
   reserveBooking,
+  reserveCustomBooking,
   type AvailabilityDay,
   type BookingFulfilment,
   type BookingSlot,
+  type CustomPriceCard,
   type DayState,
 } from "@/features/booking/api";
+import { BookingConfirmation } from "@/features/messaging/BookingConfirmation";
+import { useMessaging } from "@/providers/messaging-provider";
 import { formatTime12 } from "@/features/booking/time-format";
 import { fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
 import { duration, type Service } from "@/features/services/data";
@@ -38,6 +44,7 @@ import {
   Store,
   Ticket,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -91,14 +98,22 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
+  const { status: messagingStatus } = useMessaging();
   const serviceId = searchParams.get("service") ?? "";
+  /** Set when the customer arrived from a conversation price card. */
+  const priceCardId = searchParams.get("priceCard") ?? "";
+  const isCustomBooking = Boolean(priceCardId);
 
   const [step, setStep] = useState<Step>("date");
   const [services, setServices] = useState<Service[]>([]);
+  const [customCard, setCustomCard] = useState<CustomPriceCard | null>(null);
+  const [customError, setCustomError] = useState("");
   const [professionalName, setProfessionalName] = useState("");
   const [fulfilment, setFulfilment] = useState<BookingFulfilment>(EMPTY_FULFILMENT);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [completedCustomBookingId, setCompletedCustomBookingId] = useState("");
+  const bookingProfileId = customCard?.professionalProfileId ?? professionalId;
 
   const [days, setDays] = useState<AvailabilityDay[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
@@ -115,48 +130,107 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
   const [bookingReference, setBookingReference] = useState("");
   const [bookingStatus, setBookingStatus] = useState<"requested" | "confirmed">("confirmed");
 
+  /**
+   * A price card becomes the service being booked, but its price and duration
+   * come from the Postgres mirror — this object is only a view of that row.
+   */
+  const customService = useMemo<Service | null>(
+    () =>
+      customCard
+        ? {
+            id: `price-card-${customCard.id}`,
+            name: customCard.serviceName,
+            category: "Custom service",
+            price: customCard.price,
+            durationMinutes: customCard.durationMinutes,
+            description: customCard.description ?? "",
+            image: "",
+            active: true,
+          }
+        : null,
+    [customCard],
+  );
+
   const service = useMemo(
-    () => services.find((item) => item.id === serviceId) ?? null,
-    [serviceId, services],
+    () => customService ?? services.find((item) => item.id === serviceId) ?? null,
+    [customService, serviceId, services],
   );
 
   // One load for everything the checkout needs to describe itself.
   useEffect(() => {
     let active = true;
-    Promise.all([
-      fetchProfessionalServices(professionalId),
-      fetchProfessionalName(professionalId).catch(() => ""),
-      fetchBookingFulfilment(professionalId).catch(() => null),
-    ])
-      .then(([nextServices, nextName, nextFulfilment]) => {
+    const load = async () => {
+      if (priceCardId) {
+        const card = await fetchConversationPriceCard(priceCardId);
+        if (!card) {
+          throw new Error("This price card is no longer available.");
+        }
+        if (card.status === "cancelled") {
+          throw new Error("This price card was withdrawn by your professional.");
+        }
+        if (card.status === "booked" || card.bookingId) {
+          throw new Error("This price card has already been booked.");
+        }
+        if (card.expiresAt && new Date(card.expiresAt).getTime() <= Date.now()) {
+          throw new Error("This price card has expired. Ask your professional for a fresh offer.");
+        }
+
+        const [nextName, nextFulfilment] = await Promise.all([
+          fetchProfessionalName(card.professionalProfileId).catch(() => ""),
+          fetchBookingFulfilment(card.professionalProfileId).catch(() => null),
+        ]);
         if (!active) return;
-        setServices(nextServices);
+        setCustomCard(card);
         setProfessionalName(nextName);
         if (nextFulfilment) setFulfilment(nextFulfilment);
+        setServices([]);
         setReady(true);
-      })
-      .catch(() => {
-        if (!active) return;
-        setLoadError(true);
-        setReady(true);
-      });
+        return;
+      }
+
+      const [nextServices, nextName, nextFulfilment] = await Promise.all([
+        fetchProfessionalServices(professionalId),
+        fetchProfessionalName(professionalId).catch(() => ""),
+        fetchBookingFulfilment(professionalId).catch(() => null),
+      ]);
+      if (!active) return;
+      setServices(nextServices);
+      setProfessionalName(nextName);
+      if (nextFulfilment) setFulfilment(nextFulfilment);
+      setReady(true);
+    };
+
+    load().catch((cause) => {
+      if (!active) return;
+      if (priceCardId) {
+        setCustomError(
+          cause instanceof Error ? cause.message : "This price card could not be opened.",
+        );
+      }
+      setLoadError(true);
+      setReady(true);
+    });
+
     return () => {
       active = false;
     };
-  }, [professionalId]);
+  }, [priceCardId, professionalId]);
 
-  // Booking always starts from a chosen service, exactly as the app does.
+  // A catalogue booking always starts from a chosen service. A price-card
+  // booking already has one, so it never redirects to the service menu.
   useEffect(() => {
-    if (!ready || loadError) return;
+    if (!ready || loadError || isCustomBooking) return;
     if (!service) router.replace(`/services/${professionalId}`);
-  }, [loadError, professionalId, ready, router, service]);
+  }, [isCustomBooking, loadError, professionalId, ready, router, service]);
 
   const calendar = useMemo(() => monthDays(visibleMonth), [visibleMonth]);
   const firstMonth = useMemo(() => monthStart(new Date()), []);
   const lastMonth = useMemo(() => moveMonth(firstMonth, 11), [firstMonth]);
 
   useEffect(() => {
-    if (!serviceId) return;
+    if (!bookingProfileId) return;
+    if (isCustomBooking && !customCard) return;
+    if (!isCustomBooking && !serviceId) return;
     let active = true;
     setAvailabilityLoading(true);
 
@@ -167,7 +241,12 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         ? today
         : visibleMonth;
 
-    fetchAvailability(professionalId, serviceId, iso(from), calendar.length)
+    fetchAvailability(
+      bookingProfileId,
+      isCustomBooking ? null : serviceId,
+      iso(from),
+      calendar.length,
+    )
       .then((next) => {
         if (active) setDays((next ?? []) as AvailabilityDay[]);
       })
@@ -195,7 +274,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     return () => {
       active = false;
     };
-  }, [calendar, professionalId, serviceId, visibleMonth]);
+  }, [bookingProfileId, calendar, customCard, isCustomBooking, serviceId, visibleMonth]);
 
   const stateOf = useCallback(
     (date: string) => days.find((day) => day.date === date)?.state ?? "closed",
@@ -204,10 +283,16 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
 
   const loadSlots = useCallback(
     async (date: string) => {
-      if (!date || !serviceId) return;
+      if (!date) return;
+      if (isCustomBooking && !customCard) return;
+      const durationMinutes = customCard?.durationMinutes;
+      if (!isCustomBooking && !serviceId) return;
       setSlotsLoading(true);
       try {
-        const next = await fetchBookingSlots(professionalId, serviceId, date);
+        const next =
+          isCustomBooking && durationMinutes
+            ? await fetchCustomBookingSlots(bookingProfileId, durationMinutes, date)
+            : await fetchBookingSlots(bookingProfileId, serviceId, date);
         setSlots(next);
         if (!next.some((slot) => slot.time === selectedTime && slot.available)) {
           setSelectedTime("");
@@ -218,7 +303,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         setSlotsLoading(false);
       }
     },
-    [professionalId, serviceId, selectedTime],
+    [bookingProfileId, customCard?.durationMinutes, isCustomBooking, selectedTime, serviceId],
   );
 
   const goBack = () => {
@@ -244,18 +329,28 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
       let id = bookingId;
       let stored = snapshot;
       if (!id) {
-        const booking = await reserveBooking(
-          service.id,
-          start.toISOString(),
-          notes,
-          mobileService,
-        );
+        // A price-card booking goes through the conversation RPC, which reads
+        // the mirrored price itself. `service.id` is never sent for it.
+        const booking = customCard
+          ? await reserveCustomBooking(
+              customCard.id,
+              start.toISOString(),
+              notes,
+              mobileService,
+            )
+          : await reserveBooking(
+              service.id,
+              start.toISOString(),
+              notes,
+              mobileService,
+            );
         stored = booking.snapshot;
         setSnapshot(stored);
         id = booking.id;
         setBookingId(id);
         setBookingReference(booking.reference);
         setBookingStatus(booking.status);
+        if (customCard) setCompletedCustomBookingId(id);
       }
 
       if (stored && bookingDueNow(stored) === 0) {
@@ -302,6 +397,20 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     );
   }
 
+  if (customError) {
+    return (
+      <div className="rounded-card bg-surface p-8 text-center shadow-card">
+        <h2 className="text-title text-ink">This offer can’t be booked</h2>
+        <p className="mt-2 text-caption text-muted">{customError}</p>
+        <div className="mt-5 flex flex-col items-center gap-3">
+          <Link href="/messages" className="text-caption font-bold text-primary">
+            Back to messages
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (loadError) {
     return (
       <div className="rounded-card bg-surface p-8 text-center shadow-card">
@@ -328,16 +437,24 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
 
   if (step === "confirmed") {
     return (
-      <ConfirmedScreen
-        bookingReference={bookingReference}
-        status={bookingStatus}
-        serviceName={service.name}
-        professionalName={professionalName || "The professional"}
-        date={selectedDate}
-        time={selectedTime}
-        deposit={deposit}
-        depositRequired={deposit > 0}
-      />
+      <>
+        <ConfirmedScreen
+          bookingReference={bookingReference}
+          status={bookingStatus}
+          serviceName={service.name}
+          professionalName={professionalName || "The professional"}
+          date={selectedDate}
+          time={selectedTime}
+          deposit={deposit}
+          depositRequired={deposit > 0}
+        />
+        {messagingStatus === "ready" && customCard && completedCustomBookingId ? (
+          <BookingConfirmation
+            priceCardId={customCard.id}
+            bookingId={completedCustomBookingId}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -388,6 +505,33 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
           </a>
         ) : null}
       </div>
+
+      {messagingStatus === "ready" && customCard && completedCustomBookingId ? (
+        <BookingConfirmation
+          priceCardId={customCard.id}
+          bookingId={completedCustomBookingId}
+        />
+      ) : null}
+
+      {customCard ? (
+        <div className="mb-5 flex items-start gap-3 rounded-card bg-tint px-4 py-3">
+          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-ink">
+            <Ticket aria-hidden className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-bold uppercase tracking-[1.2px] text-primary">
+              From your conversation
+            </p>
+            <p className="truncate text-body font-bold text-ink">{customCard.serviceName}</p>
+            <p className="text-caption text-muted">
+              {money(customCard.price)} · {duration(customCard.durationMinutes)}
+              {customCard.expiresAt
+                ? ` · offer holds until ${new Date(customCard.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+                : ""}
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {step === "date" ? (
         <>

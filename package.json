@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "node --experimental-strip-types --test src/lib/pricing.test.mjs",
     "test:chat": "vitest run convex src/features/messaging",
+    "test:media": "vitest run src/lib/media src/features/badges src/features/feed",
     "convex:dev": "convex dev",
     "convex:deploy": "convex deploy"
   },

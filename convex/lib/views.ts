@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { PresenceView } from "./presence";
 import {
   identityForRole,
   resolveConversationRoles,
@@ -8,6 +9,8 @@ import {
 } from "./roles";
 
 type Ctx = QueryCtx | MutationCtx;
+
+export type { PresenceView } from "./presence";
 
 /**
  * Wire shapes returned to the app. The client mirrors these in
@@ -103,6 +106,8 @@ export type ConversationSummary = {
   viewerDisplayName: string;
   /** Why the thread exists; roles are derived from this, never from a mode. */
   context: "professional_contact" | "booking";
+  /** Null means the caller is not permitted to see the peer's presence. */
+  peerPresence: PresenceView | null;
 };
 
 export function priceCardView(card: Doc<"priceCards">): PriceCardView {

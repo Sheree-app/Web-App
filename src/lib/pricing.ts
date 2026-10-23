@@ -27,6 +27,14 @@ export function bookingDueNow(b: {
 export function feeLabel(c: FeeConfig, capped: boolean) {
     return `Sheree service fee (${Number((c.service_fee_rate * 100).toFixed(4))}%${capped ? `, capped at ${formatMoney(c.service_fee_cap, c.currency)}` : ""})`;
 }
+function isExpectedFeeConfigFallback(error: unknown) {
+    const candidate = error as { code?: unknown; message?: unknown } | null;
+    const code = String(candidate?.code ?? "");
+    const message = `${String(candidate?.message ?? "")} ${String((candidate as { details?: unknown })?.details ?? "")}`;
+    return code === "PGRST202" || code === "42883" ||
+        /get_service_fee_config.*(not found|does not exist|schema cache)/i.test(message) ||
+        /failed to fetch|network error|network request failed|fetch failed/i.test(message);
+}
 export async function fetchFeeConfig(client: {
     rpc: (name: never) => PromiseLike<{
         data: unknown;
@@ -44,7 +52,11 @@ export async function fetchFeeConfig(client: {
         return { service_fee_rate: Number(row.service_fee_rate), service_fee_cap: Number(row.service_fee_cap), currency: row.currency };
     }
     catch (error) {
-        console.error("Service fee config unavailable; using emergency fallback", error);
+        // During rollout the RPC may not exist in a project's schema cache yet.
+        // The fallback is the policy of record, so don't turn that expected
+        // migration gap into a server console error on every page render.
+        if (!isExpectedFeeConfigFallback(error))
+            console.error("Service fee config unavailable; using emergency fallback", error);
         return FALLBACK_FEE_CONFIG;
     }
 }

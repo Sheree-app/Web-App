@@ -6,6 +6,7 @@ import { AppSplash } from "@/components/brand/splash";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { ToastProvider } from "@/providers/toast-provider";
+import { WelcomeModal } from "@/components/shell/welcome-modal";
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans, Sacramento } from "next/font/google";
 import "./globals.css";
@@ -76,6 +77,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <MessagingProvider>
               <PricingProvider initialConfig={config}>
               <AppSplash />
+              <WelcomeModal />
               {children}
               </PricingProvider>
               </MessagingProvider>

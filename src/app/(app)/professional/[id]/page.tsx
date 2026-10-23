@@ -3,24 +3,16 @@ import { StartConversation } from "@/features/messaging/StartConversation";
 
 import { Avatar, CardSkeleton, Skeleton, Spinner } from "@/components/ui";
 import { fetchCreatorProfile, type CreatorProfile } from "@/features/profile/api";
+import { SocialIcon, type SocialIconName } from "@/features/profile/SocialIcon";
 import { SOCIAL_PLATFORMS, normalizeSocialLink, type SocialPlatform } from "@/features/profile/socials";
 import { useToast } from "@/providers/toast-provider";
-import { ArrowLeft, BadgeCheck, ChevronLeft, ChevronRight, MapPin, Share2, X } from "lucide-react";
+import { ProfessionalName } from "@/features/badges/ProfessionalName";
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, MapPin, Share2, X } from "lucide-react";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const stars = (rating: number) => "★".repeat(Math.round(rating)) + "☆".repeat(Math.max(0, 5 - Math.round(rating)));
-
-/** The glyph the app shows for each platform, as close as the web gets. */
-const SOCIAL_GLYPH: Partial<Record<SocialPlatform, string>> = {
-  instagram: "◎",
-  tiktok: "♪",
-  facebook: "f",
-  x: "✕",
-  youtube: "▶",
-  snapchat: "◍",
-};
 
 type Tab = "work" | "studio" | "reviews";
 
@@ -55,12 +47,6 @@ export default function ProfessionalPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  const [left, right] = useMemo(() => {
-    const columns: [CreatorProfile["portfolio"], CreatorProfile["portfolio"]] = [[], []];
-    profile?.portfolio.forEach((item, index) => columns[index % 2].push(item));
-    return columns;
-  }, [profile]);
 
   const share = async () => {
     if (!profile) return;
@@ -113,6 +99,9 @@ export default function ProfessionalPage() {
 
   return (
     <div className="flex flex-col px-4 pb-12 pt-2">
+      {/* Identity, actions and tabs stay in a readable column; the work grid
+          below is allowed to use the full content width. */}
+      <div className="mx-auto w-full max-w-[720px]">
       <div className="flex items-center justify-between">
         <button
           type="button"
@@ -135,10 +124,17 @@ export default function ProfessionalPage() {
       <section className="mt-4 flex flex-col items-center gap-1">
         <Avatar name={profile.name} src={profile.avatar} size={104} />
         <span className="mt-2 flex items-center gap-1.5">
-          <h1 className="text-section text-ink">{profile.name}</h1>
-          {profile.verified ? (
-            <BadgeCheck aria-label="Verified" className="size-[21px] text-success" />
-          ) : null}
+          <ProfessionalName
+            name={profile.name}
+            professionalId={profile.id}
+            verified={profile.verified}
+            founding={profile.founding}
+            official={profile.official}
+            foundingLabel
+            size={19}
+            nameAs="h1"
+            nameClassName="text-section text-ink"
+          />
         </span>
         <p className="text-body font-bold text-ink">{profile.category}</p>
         <a
@@ -158,35 +154,38 @@ export default function ProfessionalPage() {
         ) : null}
       </section>
 
-      <button
-        type="button"
-        onClick={() => router.push(`/services/${profile.id}`)}
-        className="mt-4 min-h-[54px] rounded-panel bg-primary text-body font-medium text-surface"
-      >
-        Book
-      </button>
+      <div className="mt-4 flex items-stretch gap-2">
+        <button
+          type="button"
+          onClick={() => router.push(`/services/${profile.id}`)}
+          className="flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-panel bg-primary text-body font-medium text-surface transition active:scale-[.99]"
+        >
+          <CalendarDays aria-hidden className="size-[18px]" />
+          Book
+        </button>
 
-      <StartConversation professionalId={profile.id} />
+        <StartConversation professionalId={profile.id} className="flex-1" />
+      </div>
 
       {socials.length > 0 || profile.socials.whatsapp || profile.socials.telephone ? (
         <div className="mt-4 flex flex-wrap justify-center gap-4">
           {socials.map((platform) => (
             <SocialLink
               key={platform.key}
-              glyph={SOCIAL_GLYPH[platform.key] ?? "↗"}
+              platform={platform.key}
               label={platform.label}
               url={safeHref(platform.key, profile.socials[platform.key] as string)}
             />
           ))}
           {profile.socials.whatsapp ? (
             <SocialLink
-              glyph="✆"
+              platform="whatsapp"
               label="WhatsApp"
               url={`https://wa.me/${profile.socials.whatsapp.replace(/\D/g, "")}`}
             />
           ) : null}
           {profile.socials.telephone ? (
-            <SocialLink glyph="☏" label="Call" url={`tel:${profile.socials.telephone}`} />
+            <SocialLink platform="telephone" label="Call" url={`tel:${profile.socials.telephone}`} />
           ) : null}
         </div>
       ) : null}
@@ -228,38 +227,46 @@ export default function ProfessionalPage() {
           );
         })}
       </div>
+      </div>
 
       <div className="mt-4">
         {tab === "work" ? (
           profile.portfolio.length > 0 ? (
-            <div className="flex items-start gap-3">
-              <div className="flex-1">
-                {left.map((item) => (
-                  <WorkTile
-                    key={item.id}
-                    image={item.image}
-                    caption={item.caption}
-                    aspectRatio={item.aspectRatio}
-                  />
-                ))}
-              </div>
-              <div className="flex-1 pt-8">
-                {right.map((item) => (
-                  <WorkTile
-                    key={item.id}
-                    image={item.image}
-                    caption={item.caption}
-                    aspectRatio={item.aspectRatio}
-                  />
-                ))}
-              </div>
+            /* The Discover rhythm: rounded pins in staggered columns, with the
+               caption kept under each image instead of hidden in a tooltip. */
+            <div className="-mx-1 columns-2 gap-3 md:mx-0 md:columns-3 md:gap-5 lg:columns-4">
+              {profile.portfolio.map((item, index) => {
+                // Honest to the source image, within the feed's bounds.
+                const ratio = Math.min(1.05, Math.max(0.62, item.aspectRatio || 0.82));
+                return (
+                  <figure key={item.id} className="mb-4 break-inside-avoid">
+                    <div
+                      className="relative overflow-hidden rounded-panel bg-secondary"
+                      style={{ aspectRatio: `${ratio}` }}
+                    >
+                      <Image
+                        src={item.image}
+                        alt={item.caption || `Work ${index + 1} by ${profile.name}`}
+                        fill
+                        sizes="(min-width: 1024px) 24vw, (min-width: 768px) 32vw, 48vw"
+                        className="object-cover"
+                      />
+                    </div>
+                    {item.caption ? (
+                      <figcaption className="mt-2.5 line-clamp-2 px-1 text-[11px] leading-[15px] text-ink">
+                        {item.caption}
+                      </figcaption>
+                    ) : null}
+                  </figure>
+                );
+              })}
             </div>
           ) : (
             <Empty glyph="🖼" title="No work posted yet" />
           )
         ) : tab === "studio" ? (
           profile.studio.length > 0 ? (
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+            <div className="mx-auto grid w-full max-w-[720px] grid-cols-2 gap-3 lg:grid-cols-3">
               {profile.studio.map((photo, index) => (
                 <button
                   key={photo.id}
@@ -276,7 +283,7 @@ export default function ProfessionalPage() {
             <Empty glyph="🏬" title="No studio photos yet" />
           )
         ) : profile.reviews.length > 0 ? (
-          <div className="flex flex-col gap-4">
+          <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4">
             <div className="flex items-center gap-4 rounded-card bg-surface p-4">
               <div>
                 <p className="text-page text-ink">{profile.rating.toFixed(1)}</p>
@@ -307,7 +314,7 @@ export default function ProfessionalPage() {
             </ul>
           </div>
         ) : (
-          <div className="flex items-center gap-3 rounded-card bg-surface p-4">
+          <div className="mx-auto flex w-full max-w-[720px] items-center gap-3 rounded-card bg-surface p-4">
             <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-tint text-[23px] text-primary">
               ★
             </span>
@@ -385,37 +392,28 @@ function safeHref(platform: SocialPlatform, value: string) {
   }
 }
 
-function SocialLink({ glyph, label, url }: { glyph: string; label: string; url: string }) {
+function SocialLink({
+  platform,
+  label,
+  url,
+}: {
+  platform: SocialIconName;
+  label: string;
+  url: string;
+}) {
   return (
-    <a href={url} target="_blank" rel="noreferrer noopener" className="flex flex-col items-center gap-1">
-      <span className="flex size-11 items-center justify-center rounded-full bg-surface text-[21px] text-ink">
-        {glyph}
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="flex flex-col items-center gap-1"
+      aria-label={label}
+    >
+      <span className="flex size-11 items-center justify-center rounded-full bg-surface text-ink">
+        <SocialIcon platform={platform} className="size-[21px]" />
       </span>
       <span className="text-[11px] text-muted">{label}</span>
     </a>
-  );
-}
-
-function WorkTile({
-  image,
-  caption,
-  aspectRatio,
-}: {
-  image: string;
-  caption: string;
-  aspectRatio: number;
-}) {
-  return (
-    <div className="mb-4 break-inside-avoid">
-      {/* `aspectRatio` is width ÷ height, so the tile keeps the work's own shape. */}
-      <div
-        className="relative w-full overflow-hidden rounded-panel bg-secondary"
-        style={{ aspectRatio: `${aspectRatio || 0.82}` }}
-      >
-        <Image src={image} alt="" fill sizes="50vw" className="object-cover" />
-      </div>
-      <p className="mt-2 line-clamp-2 text-caption text-ink">{caption}</p>
-    </div>
   );
 }
 

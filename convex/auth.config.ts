@@ -41,7 +41,12 @@ export default {
     {
       type: 'customJwt',
       issuer,
-      jwks: `${issuer}/.well-known/jwks.json`,
+      // The version query is intentional: Convex caches a provider's JWKS, and
+      // a Supabase project that rotates its asymmetric signing key keeps serving
+      // the new key at the same URL. Bumping this value forces the deployment to
+      // fetch the current key set instead of rejecting fresh tokens with an
+      // unknown `kid` until the cache expires.
+      jwks: `${issuer}/.well-known/jwks.json?v=2`,
       algorithm: 'ES256',
       // Supabase access tokens carry `aud: "authenticated"`. Omitting this is
       // documented as often insecure, so it is set explicitly.

@@ -2,6 +2,7 @@
 import { CustomerPrice } from "@/providers/pricing-provider";
 
 import { cn } from "@/lib/utils";
+import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import type { Professional } from "@/features/explore/data";
 import { BadgeCheck, Sparkles } from "lucide-react";
 import Image from "next/image";
@@ -49,13 +50,18 @@ export function ProfessionalTile({
       )}
 
       <span className="flex flex-col gap-[3px] p-3">
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-[2px]">
           <span className="truncate text-[15px] leading-[21px] font-medium text-ink">
             {item.name}
           </span>
           {item.verified ? (
-            <BadgeCheck aria-hidden className="size-[15px] shrink-0 text-success" />
+            <BadgeCheck
+              aria-label="Verified Professional"
+              className="size-[15px] shrink-0 text-success"
+            />
           ) : null}
+          {/* The whole tile is a link, so the badge is presentational here. */}
+          <FoundingBadge professionalId={item.id} size={15} interactive={false} />
         </span>
 
         <span className="truncate text-caption text-muted">

@@ -71,6 +71,63 @@ export type PresignedUpload = {
   expiresIn: number;
 };
 
+/**
+ * Measured properties of one video clip. Exactly what the `media-storage`
+ * Edge Function needs to validate a signed Cloudinary ticket.
+ */
+export type VideoClipMeta = {
+  mimeType: string;
+  size: number;
+  width: number;
+  height: number;
+  durationMs: number;
+};
+
+/** Signed Cloudinary upload ticket returned by `media-storage`. */
+export type VideoUploadTicket = {
+  provider: "cloudinary";
+  kind: "video";
+  mediaId: string;
+  purpose: MediaPurpose;
+  cloudName: string;
+  uploadUrl: string;
+  /** Every signed multipart field (`api_key`, `timestamp`, `signature`, …). */
+  fields: Record<string, string>;
+  publicId: string;
+  expiresIn: number;
+};
+
+/** Poster frame extracted from a clip, before it enters the image pipeline. */
+export type VideoPoster = {
+  /** Object URL for the local preview. */
+  uri: string;
+  blob: Blob;
+  mimeType: string;
+  width: number;
+  height: number;
+};
+
+/** A validated, measured clip plus the poster frame captured from it. */
+export type PreparedVideo = {
+  file: Blob;
+  fileName: string | null;
+  clip: VideoClipMeta;
+  poster: VideoPoster;
+};
+
+/** Result of a completed Cloudinary upload, confirmed by `media-storage`. */
+export type UploadedVideo = {
+  provider: "cloudinary";
+  mediaId: string | null;
+  publicId: string;
+  /** Cloudinary `secure_url` — what `feed_posts.video_url` stores. */
+  url: string;
+  mimeType: string;
+  durationMs: number;
+  width: number;
+  height: number;
+};
+
 /** Shape of a row in the `media` table. */
 export type MediaRecord = {
   id: string;
@@ -121,4 +178,5 @@ export type UploadOptions = {
 export type MediaDeletionTarget =
   | { mediaId: string }
   | { provider: "r2"; key: string }
-  | { provider: "supabase"; bucket: "avatars" | "portfolio"; key: string };
+  | { provider: "supabase"; bucket: "avatars" | "portfolio"; key: string }
+  | { provider: "cloudinary"; publicId: string };

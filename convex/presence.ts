@@ -1,15 +1,17 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
-    ensureViewer,
-    viewerOrNull
+  ensureViewer,
+  requireParticipantConversation,
+  viewerOrNull
 } from "./lib/identity";
 import {
-    derivePresence,
-    presenceIsVisible,
-    presenceRowFor,
-    UNKNOWN_PRESENCE,
-    type PresenceView,
+  derivePresence,
+  deriveTyping,
+  presenceIsVisible,
+  presenceRowFor,
+  UNKNOWN_PRESENCE,
+  type PresenceView,
 } from "./lib/presence";
 import { peerIdOf } from "./lib/users";
 
@@ -164,5 +166,88 @@ export const peerPresence = query({
     if (!presenceIsVisible(peerRow)) return null;
 
     return derivePresence(peerRow, Date.now());
+  },
+});
+
+/**
+ * "I am typing" / "I have stopped", sent while the composer holds text.
+ *
+ * Deliberately NOT a message and not part of the conversation: nothing is stored
+ * on the thread and nothing reaches the peer's unread count, which is what keeps
+ * a keystroke out of the history. A ping that is never retracted simply expires.
+ *
+ * The participant check runs first, so a conversation id can never be used to
+ * broadcast typing into a stranger's thread.
+ */
+export const setTyping = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    typing: v.boolean(),
+  },
+  handler: async (ctx, args): Promise<number | null> => {
+    const viewer = await ensureViewer(ctx);
+    await requireParticipantConversation(ctx, args.conversationId, viewer._id);
+    const now = Date.now();
+    const row = await presenceRowFor(ctx, viewer._id);
+
+    if (!args.typing) {
+      // Only retract the flag if this thread owns it. A stop arriving late from a
+      // thread the user has already left must not wipe a newer ping from the
+      // thread now on screen.
+      if (row && row.typingConversationId === args.conversationId) {
+        await ctx.db.patch(row._id, { typingConversationId: null, typingAt: now });
+      }
+      return null;
+    }
+
+    if (row) {
+      await ctx.db.patch(row._id, {
+        typingConversationId: args.conversationId,
+        typingAt: now,
+      });
+      return now;
+    }
+
+    // Never beaten and never configured: create a row that claims NOTHING about
+    // being online. `lastSeenAt: 0` is "never seen" (see `derivePresence`), so a
+    // typing ping can never be mistaken for a presence sighting.
+    await ctx.db.insert("presence", {
+      userId: viewer._id,
+      state: "away",
+      lastSeenAt: 0,
+      visibility: "everyone",
+      typingConversationId: args.conversationId,
+      typingAt: now,
+    });
+    return now;
+  },
+});
+
+/**
+ * Whether the peer is composing in this thread, as a timestamp or null.
+ *
+ * Gated exactly like `peerPresence`, and for the same reason: typing is an
+ * activity disclosure, so the same reciprocity applies. Hiding your status must
+ * not become a way to watch somebody else type.
+ *
+ * The client turns the timestamp into a live boolean, so the indicator ages out
+ * even though nothing is written when somebody stops.
+ */
+export const peerTyping = query({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, args): Promise<number | null> => {
+    const viewer = await viewerOrNull(ctx);
+    if (!viewer) return null;
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) return null;
+    if (!conversation.participantIds.some((id) => id === viewer._id)) return null;
+
+    const viewerRow = await presenceRowFor(ctx, viewer._id);
+    if (!presenceIsVisible(viewerRow)) return null;
+
+    const peerRow = await presenceRowFor(ctx, peerIdOf(conversation, viewer._id));
+    if (!presenceIsVisible(peerRow)) return null;
+
+    return deriveTyping(peerRow, args.conversationId, Date.now());
   },
 });

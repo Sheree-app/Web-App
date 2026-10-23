@@ -28,6 +28,11 @@ import {
   type ConversationReadReceipt,
   type ConversationSummary,
 } from "./lib/views";
+import {
+  derivePresence,
+  presenceIsVisible,
+  presenceRowFor,
+} from "./lib/presence";
 
 const originKindValidator = v.union(
   v.literal("profile"),
@@ -228,6 +233,15 @@ async function summarize(
   const peer = await conversationPeer(ctx, conversation, viewer._id);
   if (!peer) return null;
 
+  const [viewerPresence, peerPresence] = await Promise.all([
+    presenceRowFor(ctx, viewer._id),
+    presenceRowFor(ctx, peer.userId),
+  ]);
+  const visiblePeerPresence =
+    presenceIsVisible(viewerPresence) && presenceIsVisible(peerPresence)
+      ? derivePresence(peerPresence, Date.now())
+      : null;
+
   const state = await ctx.db
     .query("readStates")
     .withIndex("by_conversation_user", (q) =>
@@ -250,6 +264,7 @@ async function summarize(
     viewerRole,
     viewerDisplayName: identityForRole(viewer, viewerRole).displayName,
     context: conversation.context ?? "professional_contact",
+    peerPresence: visiblePeerPresence,
   };
 }
 
@@ -372,28 +387,33 @@ export const markRead = mutation({
       args.conversationId,
       viewer._id,
     );
-    const cursor = args.lastReadMessageId
-      ? await ctx.db.get(args.lastReadMessageId)
-      : await ctx.db.query("messages").withIndex("by_conversation_created", q => q.eq("conversationId", conversation._id)).order("desc").first();
-    if (args.lastReadMessageId && (!cursor || cursor.conversationId !== conversation._id)) {
-      throw new MessagingError("invalid", "That message is not in this conversation.");
+    const now = Date.now();
+    const state = await ctx.db
+      .query("readStates")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversation._id).eq("userId", viewer._id),
+      )
+      .unique();
+
+    if (state) {
+      if (state.unreadCount === 0 && state.lastReadMessageId === (args.lastReadMessageId ?? null)) {
+        return state.lastReadAt;
+      }
+      await ctx.db.patch(state._id, {
+        lastReadAt: now,
+        lastReadMessageId: args.lastReadMessageId ?? state.lastReadMessageId,
+        unreadCount: 0,
+      });
+    } else {
+      await ctx.db.insert("readStates", {
+        conversationId: conversation._id,
+        userId: viewer._id,
+        lastReadAt: now,
+        lastReadMessageId: args.lastReadMessageId ?? null,
+        unreadCount: 0,
+      });
     }
-    const state = await ctx.db.query("readStates").withIndex("by_conversation_user", q => q.eq("conversationId", conversation._id).eq("userId", viewer._id)).unique();
-    const previous = state?.lastReadMessageId ? await ctx.db.get(state.lastReadMessageId) : null;
-    // A delayed request from another tab must never move the cursor backwards.
-    if (previous && cursor && (previous.createdAt > cursor.createdAt || (previous.createdAt === cursor.createdAt && previous._creationTime >= cursor._creationTime))) {
-      return state!.lastReadAt;
-    }
-    // A message that arrived after the rendered cursor stays unread, even if it
-    // arrived before this mutation reached the server.
-    const tail = cursor ? await ctx.db.query("messages").withIndex("by_conversation_created", q => q.eq("conversationId", conversation._id).gte("createdAt", cursor.createdAt)).order("asc").collect() : [];
-    const cursorIndex = cursor ? tail.findIndex(message => message._id === cursor._id) : -1;
-    const unreadCount = tail.slice(cursorIndex + 1).filter(message => message.authorId !== viewer._id).length;
-    const lastReadAt = cursor?.createdAt ?? Date.now();
-    const fields = { lastReadAt, lastReadMessageId: cursor?._id ?? null, unreadCount };
-    if (state) await ctx.db.patch(state._id, fields);
-    else await ctx.db.insert("readStates", { conversationId: conversation._id, userId: viewer._id, ...fields });
-    return lastReadAt;
+    return now;
   },
 });
 

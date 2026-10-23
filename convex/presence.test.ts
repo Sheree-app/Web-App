@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { ONLINE_WINDOW_MS } from "./lib/presence";
+import { ONLINE_WINDOW_MS, TYPING_WINDOW_MS } from "./lib/presence";
 import schema from "./schema";
 
 /**
@@ -115,6 +115,36 @@ async function peerPresence(t: Test, externalId: string, conversationId: Id<"con
   return await t
     .withIdentity(identity(externalId))
     .query(api.presence.peerPresence, { conversationId });
+}
+
+/** "I am typing" / "I have stopped" — what the composer sends while it holds text. */
+async function setTyping(
+  t: Test,
+  externalId: string,
+  conversationId: Id<"conversations">,
+  typing: boolean,
+) {
+  return await t
+    .withIdentity(identity(externalId))
+    .mutation(api.presence.setTyping, { conversationId, typing });
+}
+
+async function peerTyping(t: Test, externalId: string, conversationId: Id<"conversations">) {
+  return await t
+    .withIdentity(identity(externalId))
+    .query(api.presence.peerTyping, { conversationId });
+}
+
+/** Ages somebody's typing ping, as a crashed app would, and returns it. */
+async function backdateTyping(t: Test, userId: Id<"users">, ageMs: number): Promise<number> {
+  const typingAt = Date.now() - ageMs;
+  await t.run(async (ctx) => {
+    const rows = await ctx.db.query("presence").collect();
+    const row = rows.find((candidate) => candidate.userId === userId);
+    if (!row) throw new Error("expected a presence row to backdate");
+    await ctx.db.patch(row._id, { typingAt });
+  });
+  return typingAt;
 }
 
 /**
@@ -287,5 +317,94 @@ describe("presence privacy", () => {
     // And a signed-out caller gets nothing at all.
     expect(await t.query(api.presence.peerPresence, { conversationId })).toBeNull();
     expect((await t.query(api.presence.getMine, {})).visibility).toBe("everyone");
+  });
+});
+
+describe("typing", () => {
+  test("nobody is typing until they say so, and typing is not a presence sighting", async () => {
+    const t = convexTest(schema, modules);
+    await seedFixture(t);
+    const conversationId = await contact(t, AMA, BELLA);
+
+    // No ping yet: the peer is told nothing at all.
+    expect(await peerTyping(t, BELLA, conversationId)).toBeNull();
+
+    const pingedAt = await setTyping(t, AMA, conversationId, true);
+    expect(await peerTyping(t, BELLA, conversationId)).toBe(pingedAt);
+
+    // The row this created claims NOTHING about being online: a keystroke must
+    // never be mistaken for somebody being available.
+    expect(await peerPresence(t, BELLA, conversationId)).toEqual({
+      online: false,
+      lastSeenAt: null,
+    });
+  });
+
+  test("stopping clears the dots immediately", async () => {
+    const t = convexTest(schema, modules);
+    await seedFixture(t);
+    const conversationId = await contact(t, AMA, BELLA);
+
+    await setTyping(t, AMA, conversationId, true);
+    expect(await peerTyping(t, BELLA, conversationId)).not.toBeNull();
+
+    await setTyping(t, AMA, conversationId, false);
+    expect(await peerTyping(t, BELLA, conversationId)).toBeNull();
+  });
+
+  test("a force-quit goes quiet by itself", async () => {
+    const t = convexTest(schema, modules);
+    const { amaId } = await seedFixture(t);
+    const conversationId = await contact(t, AMA, BELLA);
+
+    await setTyping(t, AMA, conversationId, true);
+    // Still fresh enough to believe...
+    await backdateTyping(t, amaId, TYPING_WINDOW_MS - 1_000);
+    expect(await peerTyping(t, BELLA, conversationId)).not.toBeNull();
+    // ...and past the window it simply stops being true, with no retraction sent.
+    await backdateTyping(t, amaId, TYPING_WINDOW_MS + 1_000);
+    expect(await peerTyping(t, BELLA, conversationId)).toBeNull();
+  });
+
+  test("typing is scoped to the thread it was typed in", async () => {
+    const t = convexTest(schema, modules);
+    await seedFixture(t);
+    const first = await contact(t, AMA, BELLA);
+    // The reverse thread is a genuinely different conversation (roles swapped).
+    const second = await contact(t, BELLA, AMA);
+
+    await setTyping(t, AMA, first, true);
+
+    expect(await peerTyping(t, BELLA, first)).not.toBeNull();
+    // A ping in one thread must not raise dots in another.
+    expect(await peerTyping(t, BELLA, second)).toBeNull();
+  });
+
+  test("hiding your status hides your typing too, in both directions", async () => {
+    const t = convexTest(schema, modules);
+    await seedFixture(t);
+    const conversationId = await contact(t, AMA, BELLA);
+
+    await setTyping(t, AMA, conversationId, true);
+    expect(await peerTyping(t, BELLA, conversationId)).not.toBeNull();
+
+    await setVisibility(t, BELLA, "nobody");
+
+    // Ama can no longer see Bella's typing...
+    expect(await peerTyping(t, AMA, conversationId)).toBeNull();
+    // ...and Bella loses Ama's, because privacy is reciprocal, not a one-way mirror.
+    expect(await peerTyping(t, BELLA, conversationId)).toBeNull();
+  });
+
+  test("a conversation id is not a key to a stranger's typing", async () => {
+    const t = convexTest(schema, modules);
+    await seedFixture(t);
+    const conversationId = await contact(t, AMA, BELLA);
+    await setTyping(t, AMA, conversationId, true);
+
+    // Chi is a real account with no part in this conversation.
+    expect(await peerTyping(t, OUTSIDER, conversationId)).toBeNull();
+    // And a signed-out caller gets nothing at all.
+    expect(await t.query(api.presence.peerTyping, { conversationId })).toBeNull();
   });
 });

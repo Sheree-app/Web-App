@@ -171,14 +171,20 @@ export default function ServicesPage() {
                 key={item.id}
                 type="button"
                 onClick={() => setSelected(item)}
-                className="flex overflow-hidden rounded-card bg-surface text-left transition active:scale-[.99]"
+                className="flex items-stretch overflow-hidden rounded-card bg-surface text-left shadow-card transition active:scale-[.99]"
               >
                 {item.image ? (
-                  <span className="relative w-[104px] shrink-0 bg-secondary">
-                    <Image src={item.image} alt="" fill sizes="104px" className="object-cover" />
+                  <span className="relative w-[104px] shrink-0 self-stretch overflow-hidden bg-secondary md:w-[128px]">
+                    <Image
+                      src={item.image}
+                      alt=""
+                      fill
+                      sizes="(min-width: 768px) 128px, 104px"
+                      className="object-cover"
+                    />
                   </span>
                 ) : null}
-                <span className="flex flex-1 flex-col gap-1 p-3">
+                <span className="flex min-w-0 flex-1 flex-col gap-1 p-3.5 md:p-4">
                   <span className="flex items-start justify-between gap-3">
                     <span className="min-w-0 flex-1">
                       {item.popular ? (
@@ -192,7 +198,7 @@ export default function ServicesPage() {
                   </span>
                   <span className="line-clamp-2 text-caption text-muted">{item.description}</span>
                   <span className="flex items-center gap-1.5 text-caption text-muted">
-                    <Clock aria-hidden className="size-[15px]" />
+                    <Clock aria-hidden className="size-[15px] shrink-0" />
                     {duration(item.durationMinutes)}
                   </span>
                 </span>

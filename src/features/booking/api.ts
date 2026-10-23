@@ -5,7 +5,12 @@ export type DayState = "available" | "limited" | "full" | "closed";
 export type AvailabilityDay = { date: string; state: DayState };
 export async function fetchAvailability(
   profileId: string,
-  serviceId: string,
+  /**
+   * `null` is valid for a conversation-only service: the availability RPC
+   * counts existing bookings per day and only uses this to exclude the service
+   * being edited, so a card without a catalogue row can share the same path.
+   */
+  serviceId: string | null,
   fromDate: string,
   dayCount = 35,
 ) {
@@ -14,7 +19,7 @@ export async function fetchAvailability(
     service_id: serviceId,
     from_date: fromDate,
     day_count: dayCount,
-  });
+  } as never);
   if (error) throw error;
   return data ?? [];
 }
@@ -64,6 +69,154 @@ export async function reserveBooking(
     reference:(booking as unknown as{status:"requested"|"confirmed";booking_reference:string}).booking_reference,
   };
 }
+/**
+ * A conversation price card as mirrored into Postgres.
+ *
+ * The booking UI only ever renders this row: it is written by Convex from the
+ * card the professional authored, and the booking RPC re-reads it too. Nothing
+ * on this screen is allowed to override its price.
+ */
+export type CustomPriceCard = {
+  id: string;
+  professionalUserId: string;
+  customerUserId: string;
+  professionalProfileId: string;
+  serviceName: string;
+  description: string | null;
+  price: number;
+  currency: string;
+  durationMinutes: number;
+  status: "draft" | "sent" | "booked" | "expired" | "cancelled";
+  expiresAt: string | null;
+  bookingId: string | null;
+};
+
+export async function fetchConversationPriceCard(
+  priceCardId: string,
+): Promise<CustomPriceCard | null> {
+  const { data, error } = await supabase
+    .from("conversation_price_cards" as never)
+    .select(
+      "id,professional_user_id,customer_user_id,service_name,description,price,currency,duration_minutes,status,expires_at,booking_id",
+    )
+    .eq("id", priceCardId)
+    .maybeSingle();
+  if (error) throw error;
+  const row = data as unknown as {
+    id: string;
+    professional_user_id: string;
+    customer_user_id: string;
+    service_name: string;
+    description: string | null;
+    price: number | string;
+    currency: string;
+    duration_minutes: number;
+    status: CustomPriceCard["status"];
+    expires_at: string | null;
+    booking_id: string | null;
+  } | null;
+  if (!row) return null;
+
+  const { data: profile, error: profileError } = await supabase
+    .from("professional_profiles")
+    .select("id")
+    .eq("user_id", row.professional_user_id)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile) return null;
+
+  return {
+    id: row.id,
+    professionalUserId: row.professional_user_id,
+    customerUserId: row.customer_user_id,
+    professionalProfileId: (profile as unknown as { id: string }).id,
+    serviceName: row.service_name,
+    description: row.description,
+    price: Number(row.price),
+    currency: row.currency || "GHS",
+    durationMinutes: Number(row.duration_minutes),
+    status: row.status,
+    expiresAt: row.expires_at,
+    bookingId: row.booking_id,
+  };
+}
+
+/** Slot list for a custom service, which depends on the card's duration. */
+export async function fetchCustomBookingSlots(
+  profileId: string,
+  durationMinutes: number,
+  date: string,
+): Promise<BookingSlot[]> {
+  const { data, error } = await supabase.rpc(
+    "get_booking_slots_custom" as never,
+    {
+      p_profile_id: profileId,
+      p_duration_minutes: durationMinutes,
+      p_booking_date: date,
+    } as never,
+  );
+  if (error) throw error;
+  return ((data ?? []) as unknown as Array<{
+    slot_time: string;
+    is_available: boolean;
+    unavailable_reason: string | null;
+  }>).map((row) => ({
+    time: row.slot_time,
+    available: row.is_available,
+    reason: row.unavailable_reason,
+  }));
+}
+
+/**
+ * Reserves a conversation service through the existing booking engine.
+ *
+ * The only inputs are the card id, a time and a note: the price and duration
+ * come from the Postgres mirror inside `reserve_custom_booking`, so they cannot
+ * be substituted by this client.
+ */
+export async function reserveCustomBooking(
+  priceCardId: string,
+  startsAt: string,
+  notes?: string,
+  mobileService = false,
+) {
+  const { data, error } = await supabase.rpc(
+    "reserve_custom_booking" as never,
+    {
+      price_card_id: priceCardId,
+      starts_at: startsAt,
+      notes: notes || null,
+      mobile_service: mobileService,
+    } as never,
+  );
+  if (error) {
+    const message = error.message ?? "";
+    if (/too close|just booked|fully booked|working hours|scheduled break|away at that time|booking window/i.test(message)) {
+      throw new BookingAvailabilityError(message);
+    }
+    throw error;
+  }
+  const id = data as string;
+  const { data: booking, error: statusError } = await supabase
+    .from("bookings" as never)
+    .select("status,booking_reference,price,deposit_amount,balance_amount,sheree_fee_amount,customer_total,currency,payment_status")
+    .eq("id", id)
+    .single();
+  if (statusError) throw statusError;
+  const row = booking as unknown as {
+    status: "requested" | "confirmed";
+    booking_reference: string;
+    payment_status: "pending" | "paid";
+  };
+  return {
+    snapshot: booking as unknown as BookingSnapshot,
+    id,
+    status: row.status,
+    reference: row.booking_reference,
+    paid: row.payment_status === "paid",
+  };
+}
+
 export type PaystackSession = {
   accessCode: string;
   authorizationUrl: string;

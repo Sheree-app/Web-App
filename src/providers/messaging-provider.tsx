@@ -4,6 +4,7 @@ import { ConvexProviderWithAuth, ConvexReactClient, useConvexAuth, useMutation, 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../../convex/_generated/api";
 import { createMessagingTokenFetcher } from "@/features/messaging/token-fetcher";
+import { usePresenceHeartbeat } from "@/features/messaging/use-presence";
 import { env } from "@/lib/env";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "./auth-provider";
@@ -54,6 +55,9 @@ function MessagingIdentity({ children }: { children: ReactNode }) {
     setAttempt(value => value + 1);
   }, [isAuthenticated]);
   const status = !signedIn ? "signedOut" : isLoading ? "loading" : !isAuthenticated ? "error" : identity?.userId === user?.id ? identity?.status ?? "loading" : "loading";
+  // Presence only beats once this account's messaging identity is ready; a
+  // signed-out or half-provisioned session never touches the presence table.
+  usePresenceHeartbeat(status === "ready");
   return <Context.Provider value={{ status, retry }}>{children}</Context.Provider>;
 }
 

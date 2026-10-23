@@ -184,16 +184,18 @@ export default defineSchema({
     .index("by_lifecycle_last_message", ["lifecycle", "lastMessageAt"]),
 
   /**
-   * Online status and last seen, one row per account.
+   * Online status, last seen, and the live activity that rides with them — one
+   * row per account.
    *
    * Kept out of `users` deliberately: that table is a mirror of Postgres that
    * `syncProfiles` overwrites wholesale, so a heartbeat written there would be
    * clobbered by the next profile sync. It also keeps a 30-second write off the
    * row every conversation read depends on.
    *
-   * "Online" is derived on read (`state === "active"` and a fresh `lastSeenAt`),
-   * never stored as a boolean, because a client that is killed mid-session can
-   * never write the "offline" that a stored boolean would need.
+   * Nothing here is a stored boolean: "online" is derived on read (`state ===
+   * "active"` and a fresh `lastSeenAt`) and "typing" from a fresh `typingAt`,
+   * because a client that is killed mid-session can never write the "offline" or
+   * "stopped typing" that a stored flag would need.
    */
   presence: defineTable({
     userId: v.id("users"),
@@ -205,6 +207,15 @@ export default defineSchema({
     lastSeenAt: v.number(),
     /** Absent on rows written before the setting existed: those are visible. */
     visibility: v.optional(presenceVisibility),
+    /**
+     * The thread this account is composing in, and when it last said so. A person
+     * has one thread on screen at a time, so a single row is enough.
+     *
+     * Typing is activity, not a message: it is never written to the thread, and a
+     * ping that is never retracted simply expires (see `deriveTyping`).
+     */
+    typingConversationId: v.optional(v.union(v.id("conversations"), v.null())),
+    typingAt: v.optional(v.number()),
   }).index("by_user", ["userId"]),
 
   /**

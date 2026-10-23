@@ -103,14 +103,21 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
     router.push(`/professional/${post.professionalId}`);
 
   return (
-    <div className="flex flex-col pt-2">
+    <div className="mx-auto flex w-full max-w-[1540px] flex-col pt-2">
       <header className="flex items-center justify-between gap-4">
         <div>
           <p className="text-eyebrow text-primary uppercase">Your lookbook</p>
           <h1 className="text-page text-ink">Made for you</h1>
         </div>
-        {signedIn ? (
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href={signedIn ? "/become-professional" : "/sign-in"}
+            className="hidden min-h-10 items-center rounded-full border border-primary/50 px-4 text-caption font-bold text-ink transition hover:bg-tint md:flex"
+          >
+            I’m a professional
+          </Link>
+          {signedIn ? (
+            <div className="flex shrink-0 items-center gap-2 md:hidden">
             <MessageLink className="size-11 transition active:scale-95" iconClassName="size-[23px]" />
             <Link
               href="/notifications"
@@ -124,15 +131,16 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
                 <span className="absolute top-[9px] right-[10px] size-[7px] rounded-full border-[1.5px] border-surface bg-primary" />
               ) : null}
             </Link>
-          </div>
-        ) : (
-          <Link
-            href="/sign-in"
-            className="flex min-h-[42px] shrink-0 items-center rounded-full bg-secondary px-4 text-caption font-bold text-ink"
-          >
-            Sign in
-          </Link>
-        )}
+            </div>
+          ) : (
+            <Link
+              href="/sign-in"
+              className="flex min-h-[42px] shrink-0 items-center rounded-full bg-secondary px-4 text-caption font-bold text-ink md:hidden"
+            >
+              Sign in
+            </Link>
+          )}
+        </div>
       </header>
 
       <p className="mt-2 mb-6 max-w-[270px] text-caption text-muted">
@@ -150,15 +158,12 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
       ) : null}
 
       {loading && posts.length === 0 ? (
-        <div className="flex items-start gap-3">
-          <div className="flex-1">
-            <CardSkeleton lines={2} />
-            <CardSkeleton lines={2} />
-          </div>
-          <div className="flex-1 pt-8">
-            <CardSkeleton lines={2} />
-            <CardSkeleton lines={2} />
-          </div>
+        <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
+          {Array.from({ length: 10 }, (_, index) => (
+            <div key={index} className="mb-5 break-inside-avoid">
+              <CardSkeleton lines={2} />
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -172,29 +177,14 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
 
       {posts.length > 0 ? (
         <>
-          <div className="flex items-start gap-3 md:gap-5">
-            {[0, 1].map((column) => (
-              <div
-                key={column}
-                className={
-                  column === 1
-                    ? "min-w-0 flex-1 pt-8 lg:pt-0"
-                    : "min-w-0 flex-1"
-                }
-              >
-                <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-5">
-                  {posts
-                    .filter((_, index) => index % 2 === column)
-                    .map((post) => (
-                      <FeedCard
-                        key={post.id}
-                        post={post}
-                        onOpen={open}
-                        onCreator={creator}
-                      />
-                    ))}
-                </div>
-              </div>
+          <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
+            {posts.map((post) => (
+              <FeedCard
+                key={post.id}
+                post={post}
+                onOpen={open}
+                onCreator={creator}
+              />
             ))}
           </div>
 

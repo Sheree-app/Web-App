@@ -46,6 +46,21 @@ const r2Host = (() => {
 
 const nextConfig: NextConfig = {
   env,
+  async headers() {
+    const associationHeaders = [
+      { key: "Content-Type", value: "application/json; charset=utf-8" },
+      {
+        key: "Cache-Control",
+        value: "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800",
+      },
+    ];
+
+    return [
+      { source: "/.well-known/apple-app-site-association", headers: associationHeaders },
+      { source: "/apple-app-site-association", headers: associationHeaders },
+      { source: "/.well-known/assetlinks.json", headers: associationHeaders },
+    ];
+  },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "*.supabase.co" },
