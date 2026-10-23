@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { resolveProfileId } from '@/features/profile/api';
 import { DEPOSIT_PERCENT, demoServices, type Service } from './data';
 
 export type ServiceCategory={id:string;name:string};
@@ -7,14 +8,23 @@ const fallbackImage=demoServices[0].image;
 function publicUrl(path?:string|null){return path?supabase.storage.from('profile-media').getPublicUrl(path).data.publicUrl:fallbackImage}
 
 export async function fetchProfessionalServices(profileId:string):Promise<Service[]>{
- const{data,error}=await supabase.rpc('get_professional_services',{profile_id:profileId});
+ const resolvedId=await resolveProfileId(profileId);
+ const{data,error}=await supabase.rpc('get_professional_services',{profile_id:resolvedId});
  if(error)throw error;
  return (data??[]).map((row,index)=>({id:row.id,name:row.name,category:row.category??'Service',price:Number(row.price),durationMinutes:row.duration_minutes,description:row.description,image:publicUrl(row.photos?.[0]?.storage_path),active:true,popular:index===0}));
 }
 export async function fetchProfessionalName(profileId:string):Promise<string>{
- const{data,error}=await supabase.from('professional_profiles').select('display_name,business_name').eq('id',profileId).single();
+ const resolvedId=await resolveProfileId(profileId);
+ const{data,error}=await supabase.from('professional_profiles').select('display_name,business_name').eq('id',resolvedId).single();
  if(error)throw error;
  return data.display_name?.trim()||data.business_name.trim();
+}
+
+export async function fetchProfessionalHandle(profileId:string):Promise<string>{
+ const resolvedId=await resolveProfileId(profileId);
+ const{data,error}=await (supabase.from('professional_profiles' as never) as any).select('id,handle').eq('id',resolvedId).single();
+ if(error)throw error;
+ return data.handle||data.id;
 }
 
 export async function fetchOwnServices():Promise<{profileId:string;countryCode:string;services:Service[]}>{

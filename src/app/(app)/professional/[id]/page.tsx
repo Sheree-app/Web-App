@@ -50,7 +50,10 @@ export default function ProfessionalPage() {
 
   const share = async () => {
     if (!profile) return;
-    const url = typeof window === "undefined" ? "" : window.location.href;
+    const url =
+      typeof window === "undefined"
+        ? ""
+        : `${window.location.origin}/professional/${profile.handle ?? profileId}`;
     if (typeof navigator !== "undefined" && navigator.share) {
       await navigator
         .share({
@@ -157,7 +160,7 @@ export default function ProfessionalPage() {
       <div className="mt-4 flex items-stretch gap-2">
         <button
           type="button"
-          onClick={() => router.push(`/services/${profile.id}`)}
+          onClick={() => router.push(`/services/${profile.handle ?? profile.id}`)}
           className="flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-panel bg-primary text-body font-medium text-surface transition active:scale-[.99]"
         >
           <CalendarDays aria-hidden className="size-[18px]" />

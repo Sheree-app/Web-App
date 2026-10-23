@@ -3,7 +3,7 @@ import { usePricing } from "@/providers/pricing-provider";
 import { feeLabel, toCedis } from "@/lib/pricing";
 
 import { CardSkeleton, Sheet, Skeleton } from "@/components/ui";
-import { fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
+import { fetchProfessionalHandle, fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
 import { duration, type Service } from "@/features/services/data";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft, ArrowRight, Clock, Info, Share2, ShieldCheck, Wallet } from "lucide-react";
@@ -70,7 +70,9 @@ export default function ServicesPage() {
   }, [items, effectiveCategory]);
 
   const share = async () => {
-    const url = typeof window === "undefined" ? "" : window.location.href;
+    const handle = await fetchProfessionalHandle(id).catch(() => id);
+    const url =
+      typeof window === "undefined" ? "" : `${window.location.origin}/services/${handle}`;
     if (typeof navigator !== "undefined" && navigator.share) {
       await navigator
         .share({
