@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -45,7 +46,6 @@ import {
 } from "./outbox";
 import { PriceCardBubble } from "./PriceCardBubble";
 import { PriceCardDialog } from "./PriceCardDialog";
-import { useTypingIndicator } from "./use-presence";
 import type {
   ConversationSummary,
   MessageView,
@@ -133,9 +133,6 @@ export function Conversation({ conversationId }: { conversationId: string }) {
 }
 
 function ThreadHeader({ conversation }: { conversation: ConversationSummary }) {
-  const typing = useQuery(api.typing.peerTyping, {
-    conversationId: conversation.id,
-  });
   const presence = presenceLabel(conversation.peerPresence);
   const roleLabel =
     conversation.viewerRole === "customer" ? "Your professional" : "Your customer";
@@ -175,11 +172,7 @@ function ThreadHeader({ conversation }: { conversation: ConversationSummary }) {
         </h1>
         <p className="flex items-center gap-2 text-caption text-muted">
           <span aria-live="polite">
-            {typing ? (
-              <span className="font-medium text-primary">typing…</span>
-            ) : (
-              presence ?? roleLabel
-            )}
+            {presence ?? roleLabel}
           </span>
           {lifecycle ? (
             <span className="rounded-full bg-tint px-2 py-0.5 text-[10px] font-bold text-muted">
@@ -207,12 +200,10 @@ function MessageHistory({
     { initialNumItems: 30 },
   );
   const receipt = useQuery(api.conversations.readReceipt, { conversationId });
-  const typing = useQuery(api.typing.peerTyping, { conversationId });
   const sendTextMutation = useMutation(api.messages.sendText);
   const sendImageMutation = useMutation(api.messages.sendImage);
   const sendVoiceMutation = useMutation(api.messages.sendVoice);
   const markRead = useMutation(api.conversations.markRead);
-  const { ping, stop: stopTyping } = useTypingIndicator(conversationId);
 
   const [draft, setDraft] = useState("");
   const [replyTo, setReplyTo] = useState<ReplyReference | null>(null);
@@ -308,10 +299,6 @@ function MessageHistory({
       setAnnouncement(`New message from ${conversation.peer.displayName}`);
     }
   }, [conversation.peer.displayName, latest]);
-
-  useEffect(() => {
-    if (typing) setAnnouncement(`${conversation.peer.displayName} is typing`);
-  }, [conversation.peer.displayName, typing]);
 
   /**
    * Advance the read cursor only while this thread is genuinely in front of
@@ -420,7 +407,6 @@ function MessageHistory({
       ...current,
       createPending({ clientMessageId, body, replyTo: reference }),
     ]);
-    stopTyping();
     try {
       const result = await sendTextMutation({
         conversationId,
@@ -478,7 +464,6 @@ function MessageHistory({
     caption: string;
     replyToMessageId?: Id<"messages">;
   }) => {
-    stopTyping();
     await sendImageMutation({
       conversationId,
       ...input,
@@ -494,7 +479,6 @@ function MessageHistory({
     sizeBytes: number;
     replyToMessageId?: Id<"messages">;
   }) => {
-    stopTyping();
     await sendVoiceMutation({
       conversationId,
       ...input,
@@ -593,15 +577,17 @@ function MessageHistory({
                     : receipt?.peerLastReadAt != null && message.createdAt < receipt.peerLastReadAt
                   : false;
                 return (
-                  <li key={message.id}>
+                  <Fragment key={message.id}>
                     {showDay ? (
-                      <div role="separator" className="my-5 flex items-center gap-3">
-                        <span className="h-px flex-1 bg-line" />
-                        <span className="text-[10px] font-bold uppercase tracking-[1.2px] text-muted">
-                          {dayLabel}
-                        </span>
-                        <span className="h-px flex-1 bg-line" />
-                      </div>
+                      <li role="presentation" className="list-none">
+                        <div role="separator" className="my-5 flex items-center gap-3">
+                          <span className="h-px flex-1 bg-line" />
+                          <span className="text-[10px] font-bold uppercase tracking-[1.2px] text-muted">
+                            {dayLabel}
+                          </span>
+                          <span className="h-px flex-1 bg-line" />
+                        </div>
+                      </li>
                     ) : null}
                     <MessageBubble
                       message={message}
@@ -621,7 +607,7 @@ function MessageHistory({
                         else messageRefs.current.delete(message.id);
                       }}
                     />
-                  </li>
+                  </Fragment>
                 );
               })}
 
@@ -717,17 +703,11 @@ function MessageHistory({
           onSendVoice={sendVoice}
           canCreatePriceCard={conversation.viewerRole === "professional"}
           onOpenPriceCard={onOpenPriceCard}
-          onTyping={ping}
           online={online}
         />
         {readError ? (
           <p role="status" className="px-4 pb-1 text-center text-[10px] text-muted">
             Read status could not update. Retrying automatically.
-          </p>
-        ) : null}
-        {typing ? (
-          <p className="px-4 pb-1 text-[10px] text-muted" aria-hidden>
-            {conversation.peer.displayName} is typing…
           </p>
         ) : null}
       </div>
@@ -860,7 +840,7 @@ function MessageBubble({
       <div className="relative flex max-w-[88%] flex-col md:max-w-[76%]">
         <div
           className={cn(
-            "relative rounded-2xl px-3.5 py-2.5",
+            "relative rounded-2xl px-3.5 py-2",
             mine
               ? "rounded-br-sm bg-primary text-surface"
               : "rounded-bl-sm border border-line bg-surface text-ink",
@@ -940,26 +920,27 @@ function MessageBubble({
             <p className="text-caption italic opacity-70">Message removed</p>
           ) : null}
 
-          <div
-            className={cn(
-              "mt-1 flex items-center justify-end gap-1 text-[10px]",
-              mine ? "text-surface/80" : "text-muted",
-            )}
-          >
-            <time dateTime={new Date(message.createdAt).toISOString()} title={new Date(message.createdAt).toLocaleString()}>
-              {formatTime(message.createdAt)}
-            </time>
-            {mine ? (
-              <>
-                <span>{read ? "Read" : "Sent"}</span>
-                {read ? (
-                  <CheckCheck aria-hidden className="size-3.5" />
-                ) : (
-                  <Check aria-hidden className="size-3.5" />
-                )}
-              </>
-            ) : null}
-          </div>
+        </div>
+
+        <div
+          className={cn(
+            "mt-0.5 flex items-center gap-1 px-1 text-[10px] text-muted",
+            mine ? "justify-end" : "justify-start",
+          )}
+        >
+          <time dateTime={new Date(message.createdAt).toISOString()} title={new Date(message.createdAt).toLocaleString()}>
+            {formatTime(message.createdAt)}
+          </time>
+          {mine ? (
+            <>
+              <span>{read ? "Read" : "Sent"}</span>
+              {read ? (
+                <CheckCheck aria-hidden className="size-3.5" />
+              ) : (
+                <Check aria-hidden className="size-3.5" />
+              )}
+            </>
+          ) : null}
         </div>
 
         <div

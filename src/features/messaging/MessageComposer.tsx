@@ -54,7 +54,6 @@ export function MessageComposer({
   onSendVoice,
   canCreatePriceCard,
   onOpenPriceCard,
-  onTyping,
   online,
 }: {
   conversationId: Id<"conversations">;
@@ -81,7 +80,6 @@ export function MessageComposer({
   }) => Promise<void>;
   canCreatePriceCard: boolean;
   onOpenPriceCard: () => void;
-  onTyping: (hasText: boolean) => void;
   online: boolean;
 }) {
   const generateUploadUrl = useMutation(api.messages.generateUploadUrl);
@@ -206,7 +204,7 @@ export function MessageComposer({
     const controller = new AbortController();
     imageAbortRef.current = controller;
     try {
-      const uploadUrl = await generateUploadUrl({ conversationId });
+      const uploadUrl = await generateUploadUrl({});
       const storageId = await uploadToConvex(uploadUrl, image.file, {
         contentType: image.mimeType,
         onProgress: setImageProgress,
@@ -240,7 +238,7 @@ export function MessageComposer({
     const controller = new AbortController();
     voiceAbortRef.current = controller;
     try {
-      const uploadUrl = await generateUploadUrl({ conversationId });
+      const uploadUrl = await generateUploadUrl({});
       const storageId = await uploadToConvex(uploadUrl, voice.recording.file, {
         contentType: voice.recording.mimeType,
         onProgress: setVoiceProgress,
@@ -277,7 +275,6 @@ export function MessageComposer({
     // failure it is the retryable bubble, so keeping a second copy here would
     // invite a duplicate send under a new idempotency key.
     onDraftChange("");
-    onTyping(false);
     onCancelReply();
     if (!ok) {
       setTextError("Your message wasn’t sent. It’s saved in the thread — tap Retry.");
@@ -577,9 +574,7 @@ export function MessageComposer({
               value={draft}
               onChange={(event) => {
                 onDraftChange(event.target.value);
-                onTyping(event.target.value.trim().length > 0);
               }}
-              onBlur={() => onTyping(false)}
               onKeyDown={onKeyDown}
               maxLength={MAX_BODY}
               rows={1}

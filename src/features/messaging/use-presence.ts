@@ -1,9 +1,8 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -60,69 +59,4 @@ export function usePresenceHeartbeat(enabled: boolean) {
       away();
     };
   }, [enabled, goAway, heartbeat]);
-}
-
-/**
- * Debounced typing state.
- *
- * At most one write every two seconds while the person keeps typing, and an
- * explicit stop on send, blur, navigation, or after a short idle period. The
- * server row expires anyway; this keeps the indicator responsive without
- * turning keystrokes into writes.
- */
-export function useTypingIndicator(
-  conversationId: Id<"conversations">,
-  options: { enabled?: boolean } = {},
-) {
-  const enabled = options.enabled ?? true;
-  const setTyping = useMutation(api.typing.setTyping);
-  const typingRef = useRef(false);
-  const lastBeatRef = useRef(0);
-  const idleRef = useRef<number | null>(null);
-
-  const clearIdle = useCallback(() => {
-    if (idleRef.current !== null) {
-      window.clearTimeout(idleRef.current);
-      idleRef.current = null;
-    }
-  }, []);
-
-  const stop = useCallback(() => {
-    clearIdle();
-    if (!typingRef.current) return;
-    typingRef.current = false;
-    void setTyping({ conversationId, typing: false }).catch(() => undefined);
-  }, [clearIdle, conversationId, setTyping]);
-
-  const ping = useCallback(
-    (hasText: boolean) => {
-      if (!enabled) return;
-      if (!hasText) {
-        stop();
-        return;
-      }
-      const now = Date.now();
-      if (!typingRef.current || now - lastBeatRef.current > 2_000) {
-        typingRef.current = true;
-        lastBeatRef.current = now;
-        void setTyping({ conversationId, typing: true }).catch(() => undefined);
-      }
-      clearIdle();
-      idleRef.current = window.setTimeout(stop, 3_000);
-    },
-    [clearIdle, conversationId, enabled, setTyping, stop],
-  );
-
-  // Leaving the thread (route change, tab close) must not leave a stale marker.
-  useEffect(
-    () => () => {
-      clearIdle();
-      if (typingRef.current) {
-        void setTyping({ conversationId, typing: false }).catch(() => undefined);
-      }
-    },
-    [clearIdle, conversationId, setTyping],
-  );
-
-  return { ping, stop };
 }
