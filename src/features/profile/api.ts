@@ -17,6 +17,7 @@ export type CreatorSocials = SocialLinks & { whatsapp: string | null; telephone:
 
 export type CreatorProfile = {
   id: string;
+  handle?: string;
   name: string;
   businessName: string;
   bio: string;
@@ -39,6 +40,7 @@ export type CreatorProfile = {
 
 type Payload = {
   id: string;
+  handle?: string;
   name: string;
   business_name: string;
   bio: string;
@@ -68,14 +70,30 @@ type StatusRow = {
   is_official: boolean | null;
 };
 
+/** Resolve a professional handle while keeping legacy UUID links valid. */
+export async function resolveProfileId(profileKey: string): Promise<string> {
+  const { data, error } = await (supabase.rpc as any)("resolve_profile_id", {
+    profile_key: profileKey,
+  });
+  if (!error && data) return String(data);
+
+  const table = supabase.from("professional_profiles" as never) as any;
+  const { data: handleRow } = await table
+    .select("id")
+    .eq("handle", profileKey.toLowerCase())
+    .maybeSingle();
+  return handleRow?.id ? String(handleRow.id) : profileKey;
+}
+
 export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
   return cachedQuery(`creator:${id}`, 5 * 60 * 1000, async () => {
+    const resolvedId = await resolveProfileId(id);
     const [profileResult, linksResult, statusResult] = await Promise.all([
-      (supabase.rpc as any)('get_creator_profile', { profile_id: id }),
+      (supabase.rpc as any)('get_creator_profile', { profile_id: resolvedId }),
       supabase
         .from('professional_social_links' as never)
         .select('platform,url')
-        .eq('professional_id', id),
+        .eq('professional_id', resolvedId),
       // The public RPC predates the founding/official flags; read the same
       // server-authoritative booleans the feed uses. A deployment whose column
       // grants lag behind simply shows no badge instead of failing the page.
@@ -83,7 +101,7 @@ export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
         try {
           return await (supabase.from('professional_profiles' as never) as any)
             .select('is_founding_beautician,is_official')
-            .eq('id', id)
+            .eq('id', resolvedId)
             .maybeSingle();
         } catch {
           return { data: null, error: null };
@@ -109,6 +127,7 @@ export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
 
     return {
       id: p.id,
+      handle: p.handle,
       name: businessName,
       businessName,
       bio: p.bio,
