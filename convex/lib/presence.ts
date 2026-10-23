@@ -80,3 +80,37 @@ export async function presenceRowFor(
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .unique();
 }
+
+/**
+ * How long a "still typing" ping is believed.
+ *
+ * The client re-pings every couple of seconds while there is text in the field
+ * (`TYPING_PING_INTERVAL_MS` in the client's `typing.ts` — the two must stay in
+ * step), so this window is several pings wide and the indicator never flickers
+ * between them. It is deliberately far shorter than the presence heartbeat:
+ * typing is a claim about the next few seconds, not about the session.
+ */
+export const TYPING_WINDOW_MS = 6_000;
+
+/**
+ * The peer's typing ping for THIS conversation, as a timestamp, or null.
+ *
+ * Null is the honest answer to three different questions — they are not typing,
+ * they are typing somewhere else, or the ping has gone stale — and all three
+ * render as nothing rather than as motion that is not happening.
+ *
+ * A timestamp rather than a boolean because the answer has to age on the client:
+ * a typer who is force-quit sends no "stopped", so the app has to notice the ping
+ * going stale on its own clock (see `isPeerTyping` in the client's `typing.ts`).
+ */
+export function deriveTyping(
+  row: Doc<"presence"> | null,
+  conversationId: Id<"conversations">,
+  now: number,
+): number | null {
+  if (!row || row.typingConversationId !== conversationId) return null;
+  const typingAt = row.typingAt;
+  if (typingAt == null || typingAt <= 0) return null;
+  if (now - typingAt > TYPING_WINDOW_MS) return null;
+  return typingAt;
+}

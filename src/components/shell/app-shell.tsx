@@ -32,12 +32,15 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
 
   // Discover keeps its full-bleed masonry. A professional's profile also uses
   // the full content width so its four-column work grid gets real estate; its
-  // header and review copy stay in a readable column inside the page. Every
-  // other screen reads as a centred column at feed width.
+  // header and review copy stay in a readable column inside the page. An open
+  // post and the messages inbox need the same room to put two panes side by side
+  // on large screens. Every other screen reads as a centred column at feed width.
   const fullBleed =
     pathname === "/discover" ||
     pathname === "/home" ||
-    pathname.startsWith("/professional/");
+    pathname.startsWith("/professional/") ||
+    pathname.startsWith("/post/") ||
+    pathname.startsWith("/messages");
 
   // Web Push keeps working while the app is open: clicking a notification should
   // move the current tab, and a subscription the browser rotated has to be saved
