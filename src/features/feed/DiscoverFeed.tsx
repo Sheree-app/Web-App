@@ -98,7 +98,7 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
       void load(false);
   }, [error, hasMore, load, loading, loadingMore, posts.length, sentinel]);
 
-  const open = (post: FeedPost) => router.push(`/post/${post.id}`);
+  const open = (post: FeedPost) => router.push(`/post/${post.slug ?? post.id}`);
   const creator = (post: FeedPost) =>
     router.push(`/professional/${post.professionalId}`);
 
