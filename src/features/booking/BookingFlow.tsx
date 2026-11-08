@@ -24,6 +24,7 @@ import {
 import { BookingConfirmation } from "@/features/messaging/BookingConfirmation";
 import { useMessaging } from "@/providers/messaging-provider";
 import { formatTime12 } from "@/features/booking/time-format";
+import { resolveProfileId } from "@/features/profile/api";
 import { fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
 import { duration, type Service } from "@/features/services/data";
 import { cn } from "@/lib/utils";
@@ -113,14 +114,22 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [completedCustomBookingId, setCompletedCustomBookingId] = useState("");
-  const bookingProfileId = customCard?.professionalProfileId ?? professionalId;
+  /**
+   * The route segment can be a handle (`/booking/janedoe`) or a profile id.
+   * Every booking RPC takes the profile uuid, so resolve it once up front.
+   */
+  const [resolvedProfileId, setResolvedProfileId] = useState("");
+  const bookingProfileId = customCard?.professionalProfileId ?? resolvedProfileId;
 
   const [days, setDays] = useState<AvailabilityDay[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
+  const [availabilityError, setAvailabilityError] = useState(false);
+  const [availabilityAttempt, setAvailabilityAttempt] = useState(0);
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(new Date()));
   const [selectedDate, setSelectedDate] = useState("");
   const [slots, setSlots] = useState<BookingSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState(false);
   const [selectedTime, setSelectedTime] = useState("");
   const [notes, setNotes] = useState("");
   const [mobileService, setMobileService] = useState(false);
@@ -188,12 +197,14 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         return;
       }
 
+      const profileId = await resolveProfileId(professionalId);
       const [nextServices, nextName, nextFulfilment] = await Promise.all([
-        fetchProfessionalServices(professionalId),
-        fetchProfessionalName(professionalId).catch(() => ""),
-        fetchBookingFulfilment(professionalId).catch(() => null),
+        fetchProfessionalServices(profileId),
+        fetchProfessionalName(profileId).catch(() => ""),
+        fetchBookingFulfilment(profileId).catch(() => null),
       ]);
       if (!active) return;
+      setResolvedProfileId(profileId);
       setServices(nextServices);
       setProfessionalName(nextName);
       if (nextFulfilment) setFulfilment(nextFulfilment);
@@ -233,6 +244,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     if (!isCustomBooking && !serviceId) return;
     let active = true;
     setAvailabilityLoading(true);
+    setAvailabilityError(false);
 
     const today = new Date();
     const from =
@@ -251,21 +263,11 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         if (active) setDays((next ?? []) as AvailabilityDay[]);
       })
       .catch(() => {
-        // Don't block the calendar on a flaky read; show a plausible month.
+        // Never invent a calendar: a made-up "available" day leads straight
+        // to an empty time list that reads as "This day filled up".
         if (!active) return;
-        setDays(
-          calendar.map((day, index) => ({
-            date: iso(day),
-            state:
-              day.getDay() === 0
-                ? "closed"
-                : index % 11 === 0
-                  ? "full"
-                  : index % 5 === 0
-                    ? "limited"
-                    : "available",
-          })) as AvailabilityDay[],
-        );
+        setDays([]);
+        setAvailabilityError(true);
       })
       .finally(() => {
         if (active) setAvailabilityLoading(false);
@@ -274,7 +276,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     return () => {
       active = false;
     };
-  }, [bookingProfileId, calendar, customCard, isCustomBooking, serviceId, visibleMonth]);
+  }, [availabilityAttempt, bookingProfileId, calendar, customCard, isCustomBooking, serviceId, visibleMonth]);
 
   const stateOf = useCallback(
     (date: string) => days.find((day) => day.date === date)?.state ?? "closed",
@@ -288,6 +290,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
       const durationMinutes = customCard?.durationMinutes;
       if (!isCustomBooking && !serviceId) return;
       setSlotsLoading(true);
+      setSlotsError(false);
       try {
         const next =
           isCustomBooking && durationMinutes
@@ -299,6 +302,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         }
       } catch {
         setSlots([]);
+        setSlotsError(true);
       } finally {
         setSlotsLoading(false);
       }
@@ -557,6 +561,19 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
               <Skeleton className="h-[42px] w-full rounded-tile" />
               <Skeleton className="h-[280px] w-full rounded-card" />
             </div>
+          ) : availabilityError ? (
+            <div className="flex flex-col items-center gap-1 rounded-card bg-surface p-8 text-center shadow-card">
+              <CalendarDays aria-hidden className="size-6 text-primary" />
+              <p className="mt-1 text-title text-ink">We couldn’t load availability</p>
+              <p className="text-caption text-muted">Check your connection and try again.</p>
+              <button
+                type="button"
+                onClick={() => setAvailabilityAttempt((count) => count + 1)}
+                className="mt-3 rounded-field bg-raised px-4 py-2 text-caption font-bold text-ink"
+              >
+                Try again
+              </button>
+            </div>
           ) : (
             <div className="rounded-card bg-surface p-2 shadow-card">
               <div className="flex h-12 items-center justify-between px-1">
@@ -661,6 +678,19 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
             <div className="mt-3 flex flex-col gap-3">
               <Skeleton className="h-[52px] w-full rounded-field" />
               <Skeleton className="h-[52px] w-full rounded-field" />
+            </div>
+          ) : slotsError ? (
+            <div className="mt-3 flex flex-col items-center gap-1 rounded-card bg-surface p-8 text-center shadow-card">
+              <CalendarDays aria-hidden className="size-6 text-primary" />
+              <p className="mt-1 text-title text-ink">We couldn’t load times</p>
+              <p className="text-caption text-muted">Check your connection and try again.</p>
+              <button
+                type="button"
+                onClick={() => void loadSlots(selectedDate)}
+                className="mt-3 rounded-field bg-raised px-4 py-2 text-caption font-bold text-ink"
+              >
+                Try again
+              </button>
             </div>
           ) : slots.length === 0 ? (
             <div className="mt-3 flex flex-col items-center gap-1 rounded-card bg-surface p-8 text-center shadow-card">
