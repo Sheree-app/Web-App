@@ -1,3 +1,4 @@
+import { LoadingRegion, Skeleton } from "@/components/ui";
 import { BookingFlow } from "@/features/booking/BookingFlow";
 import { Suspense } from "react";
 
@@ -16,7 +17,16 @@ export default async function BookingPage({
   const { professionalId } = await params;
 
   return (
-    <Suspense fallback={<p className="text-caption text-muted">Loading booking…</p>}>
+    <Suspense
+      fallback={
+        // Same silhouette BookingFlow draws while it gets ready, so there's one
+        // placeholder rather than a line of text followed by a different one.
+        <LoadingRegion label="Loading booking" className="flex flex-col gap-3">
+          <Skeleton className="h-12 w-full rounded-tile" />
+          <Skeleton className="h-[280px] w-full rounded-card" />
+        </LoadingRegion>
+      }
+    >
       <BookingFlow professionalId={professionalId} />
     </Suspense>
   );

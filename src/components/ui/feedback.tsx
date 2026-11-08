@@ -7,7 +7,12 @@ export function Skeleton({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       aria-hidden
-      className={cn("animate-shimmer rounded-tile bg-skeleton", className)}
+      // Reduced motion stops the pulse; without the fixed opacity it would settle
+      // at full strength, which reads as a solid blush block rather than a placeholder.
+      className={cn(
+        "animate-shimmer rounded-tile bg-skeleton motion-reduce:animate-none motion-reduce:opacity-60",
+        className,
+      )}
       {...props}
     />
   );
@@ -39,6 +44,40 @@ export function RowSkeleton() {
         <Skeleton className="h-3 w-4/5" />
         <Skeleton className="h-3 w-2/5" />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Wraps a loading layout so screen readers hear one "Loading" instead of
+ * nothing (every Skeleton is aria-hidden).
+ */
+export function LoadingRegion({
+  label = "Loading",
+  className,
+  children,
+}: {
+  label?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div role="status" aria-busy="true" className={className}>
+      <span className="sr-only">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** The Discover/Home masonry while the first page of posts loads. */
+export function FeedSkeleton({ count = 10 }: { count?: number }) {
+  return (
+    <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
+      {Array.from({ length: count }, (_, index) => (
+        <div key={index} className="mb-5 break-inside-avoid">
+          <CardSkeleton lines={2} />
+        </div>
+      ))}
     </div>
   );
 }

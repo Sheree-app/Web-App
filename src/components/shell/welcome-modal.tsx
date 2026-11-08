@@ -5,7 +5,10 @@ import { X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-const SEEN_KEY = "sheree:welcome-modal-shown";
+export const WELCOME_SEEN_KEY = "sheree:welcome-modal-shown";
+/** Fired when the welcome closes, so other launch prompts can wait their turn. */
+export const WELCOME_CLOSED_EVENT = "sheree:welcome-closed";
+const SEEN_KEY = WELCOME_SEEN_KEY;
 
 /**
  * A soft first welcome for people discovering Sheree for the first time.
@@ -56,6 +59,7 @@ export function WelcomeModal() {
       // Best effort only; the dialog can still be dismissed for this render.
     }
     setOpen(false);
+    window.dispatchEvent(new Event(WELCOME_CLOSED_EVENT));
   }
 
   if (!open) return null;

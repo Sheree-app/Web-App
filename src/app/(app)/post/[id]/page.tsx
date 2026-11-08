@@ -29,6 +29,7 @@ import {
 import Image from "next/image";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 type Comment = {
   id: string;
@@ -552,7 +553,13 @@ export default function PostPage() {
                   Book with {firstName}
                 </span>
                 <span className="truncate text-body font-medium text-ink">
-                  {post.priceFrom !== null ? `From ${<CustomerPrice value={post.priceFrom} />}` : "Explore services"}
+                  {post.priceFrom !== null ? (
+                    <>
+                      From <CustomerPrice value={post.priceFrom} />
+                    </>
+                  ) : (
+                    "Explore services"
+                  )}
                 </span>
               </span>
               <span className="flex size-10 shrink-0 items-center justify-center rounded-field bg-ink text-background">
@@ -567,6 +574,12 @@ export default function PostPage() {
           </div>
         </div>
       </div>
+
+      <AppPromoBar
+        className="mt-4 lg:mx-auto lg:w-full lg:max-w-[520px]"
+        title="Love this look? Keep it close"
+        body="Save, book and get reminders in the Sheree app."
+      />
 
       <Sheet
         open={commentsOpen}

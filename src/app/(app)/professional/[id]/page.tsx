@@ -11,6 +11,7 @@ import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, MapPin, Share2, X }
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 const stars = (rating: number) => "★".repeat(Math.round(rating)) + "☆".repeat(Math.max(0, 5 - Math.round(rating)));
 
@@ -330,6 +331,12 @@ export default function ProfessionalPage() {
           </div>
         )}
       </div>
+
+      <AppPromoBar
+        className="mx-auto mt-8 w-full max-w-[720px]"
+        title={`Book ${profile.name} from your phone`}
+        body="Message, book and get reminders in the Sheree app."
+      />
 
       {viewerIndex !== null ? (
         <div className="fixed inset-0 z-50 flex flex-col bg-black/95">

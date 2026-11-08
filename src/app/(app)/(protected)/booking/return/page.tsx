@@ -1,6 +1,7 @@
 "use client";
 
 import { ButtonLink, Spinner, SuccessScreen } from "@/components/ui";
+import { AppPromoStrip } from "@/features/app-promo/AppPromo";
 import { verifyDeposit, releaseUnpaidBooking } from "@/features/booking/api";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -61,12 +62,19 @@ export default function BookingReturnPage() {
 
   if (state === "paid") {
     return (
-      <SuccessScreen
-        title="You’re booked."
-        message="Your deposit is paid and the appointment is on their calendar. You’ll find everything under Bookings."
-        actionLabel="See my bookings"
-        actionHref="/bookings"
-      />
+      <>
+        <SuccessScreen
+          title="You’re booked."
+          message="Your deposit is paid and the appointment is on their calendar. You’ll find everything under Bookings."
+          actionLabel="See my bookings"
+          actionHref="/bookings"
+        />
+        <AppPromoStrip
+          className="mx-auto mt-2 w-full max-w-md"
+          title="We’ll remind you before you go"
+          body="Get the app for a nudge before your appointment and a message the moment anything changes."
+        />
+      </>
     );
   }
 

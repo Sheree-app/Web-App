@@ -2,11 +2,11 @@ import { MessagingProvider } from "@/providers/messaging-provider";
 import { PricingProvider } from "@/providers/pricing-provider";
 import { fetchFeeConfig } from "@/lib/pricing";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { AppSplash } from "@/components/brand/splash";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { ToastProvider } from "@/providers/toast-provider";
 import { WelcomeModal } from "@/components/shell/welcome-modal";
+import { ReviewPromptGate } from "@/features/reviews/ReviewPromptGate";
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans, Sacramento } from "next/font/google";
 import "./globals.css";
@@ -36,6 +36,8 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Sheree" },
   formatDetection: { telephone: false },
+  // iOS Safari shows its own slim "Open in the App Store" bar from this.
+  itunes: { appId: "6799416814" },
   openGraph: {
     type: "website",
     siteName: "Sheree",
@@ -76,8 +78,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <AuthProvider>
               <MessagingProvider>
               <PricingProvider initialConfig={config}>
-              <AppSplash />
               <WelcomeModal />
+              <ReviewPromptGate />
               {children}
               </PricingProvider>
               </MessagingProvider>

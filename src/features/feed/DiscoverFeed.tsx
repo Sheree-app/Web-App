@@ -1,6 +1,7 @@
 "use client";
 
-import { CardSkeleton, Spinner } from "@/components/ui";
+import { FeedSkeleton, LoadingRegion, Spinner } from "@/components/ui";
+import { AppPromoTile } from "@/features/app-promo/AppPromo";
 import { FeedCard } from "@/features/feed/FeedCard";
 import { fetchFeed } from "@/features/feed/api";
 import { fetchUnreadNotificationCount } from "@/features/notifications/api";
@@ -10,7 +11,13 @@ import { useAuth } from "@/providers/auth-provider";
 import { Bell, CloudOff, Images } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+
+/**
+ * Pins after which the app invitation appears. Two, spaced well apart, so a
+ * longer scroll meets it once more without it ever feeling like every other tile.
+ */
+const PROMO_AFTER = new Set([6, 18]);
 
 const PAGE_SIZE = 10;
 
@@ -158,13 +165,9 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
       ) : null}
 
       {loading && posts.length === 0 ? (
-        <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
-          {Array.from({ length: 10 }, (_, index) => (
-            <div key={index} className="mb-5 break-inside-avoid">
-              <CardSkeleton lines={2} />
-            </div>
-          ))}
-        </div>
+        <LoadingRegion label="Loading work">
+          <FeedSkeleton />
+        </LoadingRegion>
       ) : null}
 
       {!loading && !error && posts.length === 0 ? (
@@ -178,13 +181,12 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
       {posts.length > 0 ? (
         <>
           <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
-            {posts.map((post) => (
-              <FeedCard
-                key={post.id}
-                post={post}
-                onOpen={open}
-                onCreator={creator}
-              />
+            {posts.map((post, index) => (
+              <Fragment key={post.id}>
+                <FeedCard post={post} onOpen={open} onCreator={creator} />
+                {/* One invitation, a few pins in, met at scrolling pace. */}
+                {PROMO_AFTER.has(index + 1) ? <AppPromoTile /> : null}
+              </Fragment>
             ))}
           </div>
 

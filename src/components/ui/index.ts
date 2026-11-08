@@ -28,6 +28,8 @@ export {
   EmptyArtwork,
   EmptyState,
   ErrorState,
+  FeedSkeleton,
+  LoadingRegion,
   RowSkeleton,
   Skeleton,
   Spinner,

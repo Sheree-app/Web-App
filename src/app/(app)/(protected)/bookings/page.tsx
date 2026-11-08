@@ -3,6 +3,7 @@ import { usePricing } from "@/providers/pricing-provider";
 import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 
 import { Avatar, RowSkeleton, Sheet } from "@/components/ui";
+import { AppPromoStrip } from "@/features/app-promo/AppPromo";
 import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import { cancelCustomerBooking, fetchCustomerBookings } from "@/features/booking/api";
 import { formatTime12 } from "@/features/booking/time-format";
@@ -251,6 +252,14 @@ export default function BookingsPage() {
           ))}
         </div>
       )}
+
+      {!loading && !error ? (
+        <AppPromoStrip
+          className="mt-8"
+          title="Keep your bookings close"
+          body="Get a reminder before each appointment and updates the moment anything changes."
+        />
+      ) : null}
 
       <Sheet
         open={Boolean(selected)}
