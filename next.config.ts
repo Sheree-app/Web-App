@@ -32,6 +32,11 @@ const env = {
   NEXT_PUBLIC_R2_PUBLIC_BASE_URL:
     process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL ?? process.env.EXPO_PUBLIC_R2_PUBLIC_BASE_URL ?? "",
   NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL ?? process.env.EXPO_PUBLIC_SITE_URL ?? "",
+  // The mobile app bakes GOOGLE_PLACES_API_KEY into its binaries for Google
+  // Maps, so it is already public. A web-specific, referrer-restricted key in
+  // NEXT_PUBLIC_GOOGLE_MAPS_API_KEY takes precedence.
+  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY:
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? process.env.GOOGLE_PLACES_API_KEY ?? "",
 };
 
 const r2Host = (() => {
