@@ -7,6 +7,7 @@ import type { FeedPost } from "@/features/feed/types";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 /**
  * Saved looks, ported from the bookmarks screen: a category rail built from
@@ -130,6 +131,14 @@ export default function BookmarksPage() {
           </div>
         )}
       </div>
+
+      {!loading && !error ? (
+        <AppPromoBar
+          className="mt-6"
+          title="Your saved looks, in your pocket"
+          body="Everything you save here is in the Sheree app too."
+        />
+      ) : null}
     </div>
   );
 }

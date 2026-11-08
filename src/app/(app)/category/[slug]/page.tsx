@@ -7,6 +7,7 @@ import { ProfessionalTile } from "@/features/explore/ProfessionalTile";
 import { ArrowLeft } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 /**
  * One trade's professionals, ported from `CategoryResultsScreen`: back button,
@@ -100,6 +101,12 @@ export default function CategoryPage() {
               </p>
             </div>
           ) : null}
+
+          <AppPromoBar
+            className="mt-8"
+            title="Take Sheree with you"
+            body="Browse, book and message professionals in the app."
+          />
         </>
       )}
     </div>

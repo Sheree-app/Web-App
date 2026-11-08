@@ -1,18 +1,37 @@
 "use client";
 
-import { CardSkeleton, Spinner } from "@/components/ui";
+import { FeedSkeleton, LoadingRegion, Spinner } from "@/components/ui";
+import { AppPromoTile } from "@/features/app-promo/AppPromo";
 import { FeedCard } from "@/features/feed/FeedCard";
 import { fetchFeed } from "@/features/feed/api";
 import { fetchUnreadNotificationCount } from "@/features/notifications/api";
 import { MessageLink } from "@/features/messaging/MessageLink";
+import type { FeedPage } from "@/features/feed/rows";
 import type { FeedPost } from "@/features/feed/types";
 import { useAuth } from "@/providers/auth-provider";
 import { Bell, CloudOff, Images } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
-const PAGE_SIZE = 10;
+/**
+ * Pins after which the app invitation appears. Two, spaced well apart, so a
+ * longer scroll meets it once more without it ever feeling like every other tile.
+ *
+ * The masonry is CSS columns, which fill top-to-bottom, so a slot that is a
+ * multiple of the column height lands at the *top* of a column, in the first
+ * screen. With a 24-pin page, 10 and 22 sit mid-column at 2, 3, 4 and 5 columns.
+ */
+const PROMO_AFTER = new Set([10, 22]);
+
+/**
+ * Posts per request. Matches the server's first page, so a five-column
+ * desktop is filled in one request instead of immediately asking for more.
+ */
+const PAGE_SIZE = 24;
+
+/** Above-the-fold pins whose images load eagerly, for a faster first paint. */
+const EAGER_IMAGES = 4;
 
 /**
  * Discover, rebuilt from the customer tab: "YOUR LOOKBOOK" over "Made for you",
@@ -21,18 +40,25 @@ const PAGE_SIZE = 10;
  *
  * The original loaded more as you scrolled; the sentinel does that here.
  */
-export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
+export function DiscoverFeed({
+  guest = false,
+  initialPage = null,
+}: {
+  guest?: boolean;
+  /** First page rendered on the server. `null` means load it in the browser. */
+  initialPage?: FeedPage | null;
+}) {
   const router = useRouter();
   const { signedIn, appMode } = useAuth();
 
-  const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [posts, setPosts] = useState<FeedPost[]>(initialPage?.items ?? []);
   const [unread, setUnread] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialPage);
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(initialPage ? Boolean(initialPage.nextCursor) : true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const cursor = useRef<{ id: string } | null>(null);
+  const cursor = useRef<{ id: string } | null>(initialPage?.nextCursor ?? null);
   const inFlight = useRef(false);
   // Held in state rather than a ref so the observer attaches as soon as the
   // sentinel actually mounts — it only renders once there are posts.
@@ -74,9 +100,26 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
   );
 
   useEffect(() => {
-    void load(true);
+    // The server already rendered the first page; only fetch it here when it
+    // couldn't (no session cookie yet, or a server-side failure).
+    if (!initialPage) void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // With a server-rendered page, `load(true)` never runs, so the bell's unread
+  // count is fetched on its own once the session is known.
+  useEffect(() => {
+    if (!initialPage || !signedIn) return;
+    let active = true;
+    void fetchUnreadNotificationCount(appMode)
+      .then((count) => {
+        if (active) setUnread(count);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [appMode, initialPage, signedIn]);
 
   useEffect(() => {
     if (!sentinel || !hasMore || error) return;
@@ -158,13 +201,9 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
       ) : null}
 
       {loading && posts.length === 0 ? (
-        <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
-          {Array.from({ length: 10 }, (_, index) => (
-            <div key={index} className="mb-5 break-inside-avoid">
-              <CardSkeleton lines={2} />
-            </div>
-          ))}
-        </div>
+        <LoadingRegion label="Loading work">
+          <FeedSkeleton />
+        </LoadingRegion>
       ) : null}
 
       {!loading && !error && posts.length === 0 ? (
@@ -178,13 +217,17 @@ export function DiscoverFeed({ guest = false }: { guest?: boolean }) {
       {posts.length > 0 ? (
         <>
           <div className="mt-2 columns-2 gap-3 md:columns-3 md:gap-5 lg:columns-4 2xl:columns-5">
-            {posts.map((post) => (
-              <FeedCard
-                key={post.id}
-                post={post}
-                onOpen={open}
-                onCreator={creator}
-              />
+            {posts.map((post, index) => (
+              <Fragment key={post.id}>
+                <FeedCard
+                  post={post}
+                  onOpen={open}
+                  onCreator={creator}
+                  priority={index < EAGER_IMAGES}
+                />
+                {/* One invitation, a few pins in, met at scrolling pace. */}
+                {PROMO_AFTER.has(index + 1) ? <AppPromoTile /> : null}
+              </Fragment>
             ))}
           </div>
 

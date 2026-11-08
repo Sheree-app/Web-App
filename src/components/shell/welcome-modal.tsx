@@ -2,10 +2,14 @@
 
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-const SEEN_KEY = "sheree:welcome-modal-shown";
+export const WELCOME_SEEN_KEY = "sheree:welcome-modal-shown";
+/** Fired when the welcome closes, so other launch prompts can wait their turn. */
+export const WELCOME_CLOSED_EVENT = "sheree:welcome-closed";
+const SEEN_KEY = WELCOME_SEEN_KEY;
 
 /**
  * A soft first welcome for people discovering Sheree for the first time.
@@ -56,6 +60,7 @@ export function WelcomeModal() {
       // Best effort only; the dialog can still be dismissed for this render.
     }
     setOpen(false);
+    window.dispatchEvent(new Event(WELCOME_CLOSED_EVENT));
   }
 
   if (!open) return null;
@@ -77,10 +82,14 @@ export function WelcomeModal() {
         className="animate-sheet relative w-full max-w-md overflow-hidden rounded-card bg-surface shadow-lift outline-none sm:animate-rise"
       >
         <div className="absolute inset-x-0 top-0 h-36 overflow-hidden bg-tint" aria-hidden>
-          <img
-            src="/images/brand/splash-beauty-background.png"
+          <Image
+            src="/images/brand/splash-beauty-background.webp"
             alt=""
-            className="h-full w-full object-cover object-top opacity-80"
+            fill
+            sizes="(min-width: 640px) 448px, 100vw"
+            // It's the largest thing on screen while the welcome is open.
+            priority
+            className="object-cover object-top opacity-80"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-surface/35 to-surface" />
         </div>

@@ -32,6 +32,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 /** A 400-metre ring — about a five-minute walk. */
 const NEARBY_RADIUS_METRES = 400;
@@ -332,6 +333,12 @@ export default function ExplorePage() {
           </>
         )
       ) : null}
+
+      <AppPromoBar
+        className="mt-8"
+        title="Sheree, made for your phone"
+        body="Discover, book and get reminders in the app."
+      />
 
       <div className="h-6" />
 

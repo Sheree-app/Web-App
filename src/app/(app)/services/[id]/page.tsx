@@ -10,6 +10,7 @@ import { ArrowLeft, ArrowRight, Clock, Info, Share2, ShieldCheck, Wallet } from 
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 /**
  * The professional's menu, rebuilt from `CustomerServicesScreen`: the same
@@ -209,6 +210,12 @@ export default function ServicesPage() {
           </section>
         ))
       )}
+
+      <AppPromoBar
+        className="mt-8"
+        title="Book on the go"
+        body="Get a reminder before every appointment in the Sheree app."
+      />
 
       <Sheet
         open={Boolean(selected)}

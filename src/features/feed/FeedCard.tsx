@@ -16,6 +16,8 @@ type Props = {
   onOpen: (post: FeedPost) => void;
   onCreator: (post: FeedPost) => void;
   onReported?: () => void;
+  /** Load the image eagerly with high priority (first pins on screen). */
+  priority?: boolean;
 };
 
 const REPORT_REASONS = [
@@ -31,7 +33,7 @@ const REPORT_REASONS = [
  * viewer, not on the tile — with the reporting menu promoted from a native
  * action sheet to an inline disclosure so it works with a keyboard too.
  */
-function Component({ post, onOpen, onCreator, onReported }: Props) {
+function Component({ post, onOpen, onCreator, onReported, priority = false }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reported, setReported] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -79,6 +81,7 @@ function Component({ post, onOpen, onCreator, onReported }: Props) {
               alt={post.caption || `${post.category} by ${post.professionalName}`}
               fill
               sizes="(min-width: 1280px) 290px, (min-width: 1024px) 23vw, 48vw"
+              priority={priority}
               className="object-cover"
             />
           </button>
