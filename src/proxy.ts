@@ -1,3 +1,4 @@
+import { FEED_SEED_COOKIE, newFeedSeed } from "@/features/feed/rows";
 import { env, isSupabaseConfigured } from "@/lib/env";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
@@ -42,10 +43,32 @@ function matches(pathname: string, prefixes: string[]) {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
+/** A year: the shuffle should stay put for as long as someone keeps visiting. */
+const FEED_SEED_MAX_AGE = 60 * 60 * 24 * 365;
+
 export async function proxy(request: NextRequest) {
+  // The feed's shuffle seed. Set on the request too, so a first visit's server
+  // render already uses the seed the browser will keep using.
+  const newSeed = request.cookies.get(FEED_SEED_COOKIE) ? null : newFeedSeed();
+  if (newSeed) request.cookies.set(FEED_SEED_COOKIE, newSeed);
+  const withSeed = <T extends NextResponse>(res: T): T => {
+    if (newSeed) {
+      res.cookies.set(FEED_SEED_COOKIE, newSeed, {
+        path: "/",
+        maxAge: FEED_SEED_MAX_AGE,
+        sameSite: "lax",
+        secure: request.nextUrl.protocol === "https:",
+        // Read by the browser's feed client as well, so not httpOnly. It's a
+        // shuffle seed, not a credential.
+        httpOnly: false,
+      });
+    }
+    return res;
+  };
+
   let response = NextResponse.next({ request });
 
-  if (!isSupabaseConfigured) return response;
+  if (!isSupabaseConfigured) return withSeed(response);
 
   const supabase = createServerClient(
     env.supabaseUrl,
@@ -71,9 +94,15 @@ export async function proxy(request: NextRequest) {
   );
 
   // Must run before the response is committed so refreshed cookies can be written.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  //
+  // `getClaims()` rather than `getUser()`: the project signs access tokens with
+  // an asymmetric key (ES256), so the token is verified locally against the
+  // cached JWKS instead of a round trip to Supabase Auth on every request. It
+  // still refreshes an expired session (and writes the cookies) first, and on a
+  // project with a symmetric key it falls back to `getUser()` by itself. These
+  // guards are optimistic either way; data access is enforced by RLS.
+  const { data } = await supabase.auth.getClaims();
+  const user = data?.claims?.sub ? data.claims : null;
 
   const pathname = request.nextUrl.pathname;
 
@@ -81,17 +110,17 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/sign-in";
     url.search = `?next=${encodeURIComponent(pathname)}`;
-    return NextResponse.redirect(url);
+    return withSeed(NextResponse.redirect(url));
   }
 
   if (user && AUTH_ROUTES.includes(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/home";
     url.search = "";
-    return NextResponse.redirect(url);
+    return withSeed(NextResponse.redirect(url));
   }
 
-  return response;
+  return withSeed(response);
 }
 
 export const config = {

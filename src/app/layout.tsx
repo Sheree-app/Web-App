@@ -1,7 +1,6 @@
 import { MessagingProvider } from "@/providers/messaging-provider";
 import { PricingProvider } from "@/providers/pricing-provider";
-import { fetchFeeConfig } from "@/lib/pricing";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getFeeConfig } from "@/lib/fee-config.server";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { ToastProvider } from "@/providers/toast-provider";
@@ -46,6 +45,12 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Pages that no longer need a request can be prerendered now; regenerate them
+ * on the same cadence as the cached fee config they embed.
+ */
+export const revalidate = 60;
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -66,7 +71,7 @@ export const viewport: Viewport = {
 const themeBootScript = `(function(){try{var s=localStorage.getItem("sheree:appearance");var m=window.matchMedia("(prefers-color-scheme: dark)").matches;var d=s==="dark"||(s==="system"&&m);document.documentElement.classList.toggle("dark",d);var t=document.querySelector('meta[name="theme-color"]');if(t)t.setAttribute("content",d?"#211B20":"#FCFAF8")}catch(e){}})();`;
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const config = await fetchFeeConfig(await createSupabaseServerClient());
+  const config = await getFeeConfig();
   return (
     <html lang="en" className={`${jakarta.variable} ${sacramento.variable}`} suppressHydrationWarning>
       <head>

@@ -130,8 +130,8 @@ export async function previewWebPush(title: string, body: string, url = "/notifi
   if (!registration || Notification.permission !== "granted") return false;
   await registration.showNotification(title, {
     body,
-    icon: "/images/icon.png",
-    badge: "/images/icon.png",
+    icon: "/images/icon-192.png",
+    badge: "/images/icon-192.png",
     tag: "sheree-preview",
     data: { url, notificationId: null },
   });

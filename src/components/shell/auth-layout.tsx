@@ -40,7 +40,7 @@ export function AuthLayout({
       {/* Booking-pattern artwork, cropped and held well below the type. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[url('/images/brand/auth-booking-pattern.png')] bg-cover bg-center opacity-[0.07] dark:opacity-[0.05]"
+        className="pointer-events-none absolute inset-0 bg-[url('/images/brand/auth-booking-pattern.webp')] bg-cover bg-center opacity-[0.07] dark:opacity-[0.05]"
       />
       <div className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pt-safe lg:flex-row lg:items-center lg:gap-16 lg:py-16">
         <div className="mx-auto flex w-full max-w-lg flex-1 flex-col md:my-10 md:rounded-card md:border md:border-line md:bg-surface md:p-8 md:shadow-card lg:my-0 lg:max-w-md lg:p-10">
