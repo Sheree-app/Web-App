@@ -5,8 +5,10 @@ import { categoryImage } from "@/features/explore/category-images";
 import {
   fetchExploreCategories,
   fetchExploreProfessionals,
+  fetchMapProfessionals,
   fetchNearbyProfessionals,
 } from "@/features/explore/api";
+import { ExploreMap, GHANA } from "@/features/explore/ExploreMap";
 import { collections, type Category, type Professional } from "@/features/explore/data";
 import { ProfessionalTile } from "@/features/explore/ProfessionalTile";
 import { cn } from "@/lib/utils";
@@ -29,7 +31,7 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 
 /** A 400-metre ring — about a five-minute walk. */
 const NEARBY_RADIUS_METRES = 400;
@@ -60,6 +62,12 @@ export default function ExplorePage() {
   const [nearby, setNearby] = useState<Professional[]>([]);
   const [nearbyState, setNearbyState] = useState<NearbyState>("loading");
   const [showMap, setShowMap] = useState(false);
+  const [mapProfessionals, setMapProfessionals] = useState<Professional[]>([]);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(
+    null,
+  );
+  /** Set once results ranked from the user's position arrive; they win over the Ghana fallback. */
+  const locatedMap = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [moodTitle, setMoodTitle] = useState<string | null>(null);
@@ -74,6 +82,14 @@ export default function ExplorePage() {
       ]);
       setCategories(nextCategories);
       setProfessionals(nextProfessionals);
+      // The map has its own result set. Until location is known it is ranked
+      // from the centre of Ghana, as on mobile; a failure leaves it empty
+      // rather than failing the whole page.
+      fetchMapProfessionals(GHANA.latitude, GHANA.longitude, 500)
+        .then((pinned) => {
+          if (!locatedMap.current) setMapProfessionals(pinned);
+        })
+        .catch(() => undefined);
     } catch {
       setError("Check your connection, then try again.");
     } finally {
@@ -89,14 +105,24 @@ export default function ExplorePage() {
     setNearbyState("loading");
     navigator.geolocation.getCurrentPosition(
       async (position) => {
+        const coords = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+        setUserLocation(coords);
         try {
-          const results = await fetchNearbyProfessionals(
-            position.coords.latitude,
-            position.coords.longitude,
-            NEARBY_RADIUS_METRES,
-            20,
-          );
+          const [results, pinned] = await Promise.all([
+            fetchNearbyProfessionals(
+              coords.latitude,
+              coords.longitude,
+              NEARBY_RADIUS_METRES,
+              20,
+            ),
+            fetchMapProfessionals(coords.latitude, coords.longitude, 500),
+          ]);
           setNearby(results);
+          locatedMap.current = true;
+          setMapProfessionals(pinned);
           setNearbyState("ready");
         } catch {
           setNearbyState("error");
@@ -189,7 +215,7 @@ export default function ExplorePage() {
         />
       ) : null}
 
-      {ready && professionals.length === 0 ? (
+      {ready && !showMap && professionals.length === 0 ? (
         <State
           icon={<Store aria-hidden className="size-7 text-primary" />}
           title="No professionals to show yet"
@@ -197,15 +223,11 @@ export default function ExplorePage() {
         />
       ) : null}
 
-      {ready && professionals.length > 0 ? (
+      {/* The map renders from its own RPC result set, so it must not depend on
+          the list having results (same rule as mobile). */}
+      {ready && (showMap || professionals.length > 0) ? (
         showMap ? (
-          // The original itself declines to draw a map on web — this is that
-          // same fallback, with the same words.
-          <div className="mx-4 mt-4 flex h-[520px] items-center justify-center rounded-card bg-raised px-6">
-            <p className="text-center text-caption font-bold text-ink">
-              Map view is available on iOS and Android.
-            </p>
-          </div>
+          <ExploreMap professionals={mapProfessionals} userLocation={userLocation} />
         ) : (
           <>
             <NearbySection items={nearby} state={nearbyState} retry={() => void loadNearby()} />

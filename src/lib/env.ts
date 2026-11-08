@@ -36,6 +36,8 @@ export const env = {
   r2PublicBaseUrl: read(
     process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL || process.env.EXPO_PUBLIC_R2_PUBLIC_BASE_URL,
   ),
+  /** Google Maps JavaScript API key for the Explore map. Empty shows a fallback. */
+  googleMapsApiKey: read(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY),
   siteUrl: read(process.env.NEXT_PUBLIC_SITE_URL || process.env.EXPO_PUBLIC_SITE_URL, "http://localhost:3000"),
 } as const;
 

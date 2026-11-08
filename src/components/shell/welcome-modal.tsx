@@ -20,8 +20,8 @@ export function WelcomeModal() {
   const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
-    // Auth and onboarding pages already have a focused task of their own.
-    if (pathname.startsWith("/sign-") || pathname.startsWith("/forgot-password") || pathname.startsWith("/reset-password") || pathname.startsWith("/verify-email") || pathname.startsWith("/onboarding")) {
+    // Auth, onboarding and account-deletion pages already have a focused task of their own.
+    if (pathname.startsWith("/sign-") || pathname.startsWith("/forgot-password") || pathname.startsWith("/reset-password") || pathname.startsWith("/verify-email") || pathname.startsWith("/onboarding") || pathname.startsWith("/account-deletion")) {
       return;
     }
 
