@@ -30,6 +30,11 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
   // header and review copy stay in a readable column inside the page. An open
   // post and the messages inbox need the same room to put two panes side by side
   // on large screens. Every other screen reads as a centred column at feed width.
+  // Messages own the whole phone screen, as in the app: the inbox and the chat
+  // are a focused flow, and a composer directly above the bottom bar would be
+  // covered by it. From `md` up the sidebar stays and nothing changes.
+  const focusedFlow = pathname === "/messages" || pathname.startsWith("/messages/");
+
   const fullBleed =
     pathname === "/discover" ||
     pathname === "/home" ||
@@ -63,6 +68,7 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
       <main
         className={cn(
           "flex-1 px-4 pt-4 pb-[calc(100px+env(safe-area-inset-bottom))] md:pt-10 md:pb-12 md:pr-10 md:pl-[calc(76px+2.5rem)] lg:pr-14 lg:pl-[calc(76px+3.5rem)]",
+          focusedFlow && "max-md:p-0",
           className,
         )}
       >
@@ -70,13 +76,14 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
           className={cn(
             "mx-auto w-full max-w-[520px]",
             fullBleed ? "md:max-w-none" : "md:max-w-[720px]",
+            focusedFlow && "max-md:max-w-none",
           )}
         >
           {children}
         </div>
       </main>
 
-      <BottomNav mode={appMode} />
+      {focusedFlow ? null : <BottomNav mode={appMode} />}
     </div>
   );
 }

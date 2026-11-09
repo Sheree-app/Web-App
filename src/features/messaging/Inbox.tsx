@@ -1,8 +1,9 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { ArrowUpRight, ImageIcon, MessageCircle, Search, X } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, ImageIcon, MessageCircle, Search, X } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { Avatar, Spinner } from "@/components/ui";
 import { FoundingBadge } from "@/features/badges/FoundingBadge";
@@ -65,12 +66,17 @@ export function Inbox({ activeId = null }: { activeId?: string | null }) {
   };
 
   return (
-    <section className="flex h-full min-h-0 w-full flex-col">
-      <header className="shrink-0 px-4 pt-2 lg:px-5 lg:pt-5">
+    <section className="flex min-h-0 w-full flex-1 flex-col">
+      <header className="shrink-0 px-4 pt-[calc(8px+env(safe-area-inset-top))] md:pt-2 lg:px-5 lg:pt-5">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="flex items-start gap-1">
+            {/* Phones have no bottom bar on Messages (as in the app), so the
+                inbox carries its own way back. */}
+            <InboxBack />
+            <div>
             <p className="text-eyebrow uppercase text-primary">Your conversations</p>
             <h1 className="mt-1 text-page text-ink lg:text-title">Messages</h1>
+            </div>
           </div>
           <MessagingUnread inbox={inbox}>
             {(count) =>
@@ -329,5 +335,19 @@ export function Inbox({ activeId = null }: { activeId?: string | null }) {
         )}
       </div>
     </section>
+  );
+}
+
+function InboxBack() {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      aria-label="Go back"
+      onClick={() => (window.history.length > 1 ? router.back() : router.push("/home"))}
+      className="-ml-2 mt-1 flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition hover:bg-tint md:hidden"
+    >
+      <ChevronLeft aria-hidden className="size-6" />
+    </button>
   );
 }

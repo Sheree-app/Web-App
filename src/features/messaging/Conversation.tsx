@@ -3,7 +3,7 @@
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import {
   ArrowDown,
-  ArrowLeft,
+  ChevronLeft,
   Check,
   CheckCheck,
   CornerUpLeft,
@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Fragment,
   useCallback,
@@ -113,7 +114,7 @@ export function Conversation({ conversationId }: { conversationId: string }) {
 
   return (
     <>
-      <section className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden bg-surface lg:mx-0 lg:max-w-none">
+      <section className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-background md:mx-auto md:max-w-3xl md:bg-surface lg:mx-0 lg:max-w-none">
         <ThreadHeader conversation={conversation} />
         <MessageHistory
           conversationId={id}
@@ -132,10 +133,15 @@ export function Conversation({ conversationId }: { conversationId: string }) {
   );
 }
 
+/**
+ * The thread header, laid out like the app's: back, avatar, then the name, a
+ * presence line (green only when online) and whose side of the conversation
+ * each person is on. On a phone it pads for the notch.
+ */
 function ThreadHeader({ conversation }: { conversation: ConversationSummary }) {
+  const router = useRouter();
   const presence = presenceLabel(conversation.peerPresence);
-  const roleLabel =
-    conversation.viewerRole === "customer" ? "Your professional" : "Your customer";
+  const peerRole = conversation.viewerRole === "customer" ? "Professional" : "Customer";
   const lifecycle =
     conversation.lifecycle === "booked"
       ? "Booked"
@@ -144,38 +150,54 @@ function ThreadHeader({ conversation }: { conversation: ConversationSummary }) {
         : null;
 
   return (
-    <header className="flex shrink-0 items-center gap-3 border-b border-line bg-surface px-3 py-2.5 md:px-4">
-      <Link
-        href="/messages"
+    <header className="flex shrink-0 items-center gap-2 border-b border-line bg-background px-2 pt-[calc(6px+env(safe-area-inset-top))] pb-2 md:gap-3 md:bg-surface md:px-4 md:py-2.5">
+      <button
+        type="button"
         aria-label="Back to messages"
-        className="flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition hover:bg-tint md:hidden"
+        onClick={() =>
+          window.history.length > 1 ? router.back() : router.push("/messages")
+        }
+        className="flex h-10 w-9 shrink-0 items-center justify-center rounded-full text-ink transition hover:bg-tint md:hidden"
       >
-        <ArrowLeft aria-hidden className="size-5" />
-      </Link>
+        <ChevronLeft aria-hidden className="size-6" />
+      </button>
       <span className="relative shrink-0">
         <Avatar
           name={conversation.peer.displayName}
           src={conversation.peer.avatarUrl}
-          size={42}
+          size={40}
         />
         {conversation.peerPresence?.online ? (
           <span
             aria-hidden
-            className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-surface bg-success"
+            className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-background bg-success md:border-surface"
           />
         ) : null}
       </span>
       <div className="min-w-0 flex-1">
-        <h1 className="flex items-center gap-[3px] truncate text-title text-ink">
+        <h1 className="flex items-center gap-[5px] text-[15.5px] leading-5 font-medium text-ink md:text-title">
           <span className="truncate">{conversation.peer.displayName}</span>
-          <FoundingBadge userId={conversation.peer.externalId} size={16} interactive={false} />
+          {conversation.viewerRole === "customer" ? (
+            <FoundingBadge userId={conversation.peer.externalId} size={15} interactive={false} />
+          ) : null}
         </h1>
-        <p className="flex items-center gap-2 text-caption text-muted">
-          <span aria-live="polite">
-            {presence ?? roleLabel}
+        {presence ? (
+          <p
+            aria-live="polite"
+            className={cn(
+              "truncate text-[11.5px] leading-[15px]",
+              conversation.peerPresence?.online ? "text-success" : "text-muted",
+            )}
+          >
+            {presence}
+          </p>
+        ) : null}
+        <p className="flex items-center gap-2 truncate text-[11.5px] leading-[15px] text-muted">
+          <span className="truncate">
+            {peerRole} · you’re the {conversation.viewerRole}
           </span>
           {lifecycle ? (
-            <span className="rounded-full bg-tint px-2 py-0.5 text-[10px] font-bold text-muted">
+            <span className="shrink-0 rounded-full bg-tint px-2 py-0.5 text-[10px] font-bold text-muted">
               {lifecycle}
             </span>
           ) : null}
@@ -524,7 +546,7 @@ function MessageHistory({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background/50 px-3 py-4 md:px-5"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background px-3 py-3 md:bg-background/50 md:px-5 md:py-4"
         aria-label="Conversation messages"
         tabIndex={0}
       >
