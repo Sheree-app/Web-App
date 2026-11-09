@@ -65,6 +65,49 @@
   --sh-shadow-bar: 0 -8px 28px rgb(0 0 0 / 0.35);
 }
 
+/* Type sizes. Tablet and desktop keep the original scale; phones get a
+   slightly tighter one so screens hold more without feeling cramped. */
+:root {
+  --sh-text-hero: 40px;
+  --sh-text-hero-lh: 48px;
+  --sh-text-page: 30px;
+  --sh-text-page-lh: 38px;
+  --sh-text-section: 22px;
+  --sh-text-section-lh: 30px;
+  --sh-text-title: 18px;
+  --sh-text-title-lh: 26px;
+  --sh-text-body: 16px;
+  --sh-text-body-lh: 24px;
+  --sh-text-caption: 13px;
+  --sh-text-caption-lh: 18px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --sh-text-hero: 32px;
+    --sh-text-hero-lh: 40px;
+    --sh-text-page: 26px;
+    --sh-text-page-lh: 34px;
+    --sh-text-section: 20px;
+    --sh-text-section-lh: 28px;
+    --sh-text-title: 16px;
+    --sh-text-title-lh: 23px;
+    --sh-text-body: 15px;
+    --sh-text-body-lh: 22px;
+    --sh-text-caption: 12px;
+    --sh-text-caption-lh: 17px;
+  }
+
+  /* iOS zooms the page into any text field under 16px when it is focused, so
+     fields stay at 16px however the surrounding text is sized. Unlayered on
+     purpose: it must win over the text-* utilities. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 @theme inline {
   /* Colour — every utility resolves through the variables above. */
   --color-primary: var(--sh-primary);
@@ -90,25 +133,26 @@
   --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-script: var(--font-sacramento), ui-serif, cursive;
 
-  /* Mobile type scale, unchanged. */
-  --text-hero: 40px;
-  --text-hero--line-height: 48px;
+  /* Type scale. Sizes resolve through --sh-text-* (below) so phones can step
+     the whole scale down in one place. */
+  --text-hero: var(--sh-text-hero);
+  --text-hero--line-height: var(--sh-text-hero-lh);
   --text-hero--font-weight: 700;
   --text-hero--letter-spacing: -0.02em;
-  --text-page: 30px;
-  --text-page--line-height: 38px;
+  --text-page: var(--sh-text-page);
+  --text-page--line-height: var(--sh-text-page-lh);
   --text-page--font-weight: 700;
   --text-page--letter-spacing: -0.01em;
-  --text-section: 22px;
-  --text-section--line-height: 30px;
+  --text-section: var(--sh-text-section);
+  --text-section--line-height: var(--sh-text-section-lh);
   --text-section--font-weight: 700;
-  --text-title: 18px;
-  --text-title--line-height: 26px;
+  --text-title: var(--sh-text-title);
+  --text-title--line-height: var(--sh-text-title-lh);
   --text-title--font-weight: 500;
-  --text-body: 16px;
-  --text-body--line-height: 24px;
-  --text-caption: 13px;
-  --text-caption--line-height: 18px;
+  --text-body: var(--sh-text-body);
+  --text-body--line-height: var(--sh-text-body-lh);
+  --text-caption: var(--sh-text-caption);
+  --text-caption--line-height: var(--sh-text-caption-lh);
   --text-eyebrow: 10px;
   --text-eyebrow--line-height: 14px;
   --text-eyebrow--font-weight: 700;
@@ -218,8 +262,8 @@
     background-color: var(--sh-background);
     color: var(--sh-ink);
     font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
-    font-size: 16px;
-    line-height: 24px;
+    font-size: var(--sh-text-body);
+    line-height: var(--sh-text-body-lh);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
