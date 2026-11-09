@@ -109,7 +109,11 @@ export default function AccountDeletionPage() {
                   ))}
                 </ul>
                 <p className="text-caption text-muted">
-                  We keep these records only for as long as the law requires, then delete them.
+                  We keep these records only for as long as the law requires, then delete them. Our{" "}
+                  <Link href="/privacy#retention" className="font-bold text-primary underline-offset-2 hover:underline">
+                    Privacy Policy
+                  </Link>{" "}
+                  explains how long each kind of record is kept.
                 </p>
               </div>
             </div>
