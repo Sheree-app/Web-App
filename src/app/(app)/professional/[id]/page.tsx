@@ -134,7 +134,8 @@ export default function ProfessionalPage() {
             verified={profile.verified}
             founding={profile.founding}
             official={profile.official}
-            foundingLabel
+            // Icon-only seal; the "Founding Beautician" pill text is dropped.
+            // Tapping the seal still explains what it means.
             size={19}
             nameAs="h1"
             nameClassName="text-section text-ink"
@@ -158,17 +159,19 @@ export default function ProfessionalPage() {
         ) : null}
       </section>
 
-      <div className="mt-4 flex items-stretch gap-2">
+      {/* An equal pair: a grid, not flex, so both halves are always the same
+          width whatever their labels or the message button's state. */}
+      <div className="mt-4 grid grid-cols-2 items-start gap-2">
         <button
           type="button"
           onClick={() => router.push(`/services/${profile.handle ?? profile.id}`)}
-          className="flex min-h-[54px] flex-1 items-center justify-center gap-2 rounded-panel bg-primary text-body font-medium text-surface transition active:scale-[.99]"
+          className="flex min-h-[54px] w-full items-center justify-center gap-2 rounded-panel bg-primary px-4 text-body leading-none font-bold text-surface shadow-card transition hover:brightness-[1.04] active:scale-[.99]"
         >
-          <CalendarDays aria-hidden className="size-[18px]" />
+          <CalendarDays aria-hidden strokeWidth={2.25} className="size-5 shrink-0" />
           Book
         </button>
 
-        <StartConversation professionalId={profile.id} className="flex-1" />
+        <StartConversation professionalId={profile.id} />
       </div>
 
       {socials.length > 0 || profile.socials.whatsapp || profile.socials.telephone ? (

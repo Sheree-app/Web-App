@@ -17,7 +17,13 @@ import { api } from "../../../convex/_generated/api";
  * margins.
  */
 const ACTION =
-  "flex min-h-[54px] w-full items-center justify-center gap-2 rounded-panel text-body font-medium transition active:scale-[.99] disabled:opacity-55";
+  "flex min-h-[54px] w-full items-center justify-center gap-2 rounded-panel px-4 text-body leading-none font-bold transition active:scale-[.99] disabled:opacity-55";
+
+/** The secondary half of the Book / Message pair: quiet surface, ink label. */
+const SECONDARY = "border border-line bg-surface text-ink hover:bg-tint";
+
+/** Icons match the label's weight and sit on its optical centre. */
+const ICON = "size-5 shrink-0 text-primary";
 
 export function StartConversation({
   professionalId,
@@ -40,10 +46,13 @@ export function StartConversation({
       <button
         type="button"
         onClick={() => router.push(`/sign-in?next=${encodeURIComponent(pathname)}`)}
-        className={cn(ACTION, "border border-primary text-primary")}
+        // "Sign in to message" truncated on phones; the label stays "Message"
+        // and the sign-in step is announced instead.
+        aria-label="Sign in to message"
+        className={cn(ACTION, SECONDARY)}
       >
-        <MessageCircle aria-hidden className="size-[18px]" />
-        Sign in to message
+        <MessageCircle aria-hidden strokeWidth={2.25} className={ICON} />
+        Message
       </button>,
     );
   }
@@ -53,9 +62,11 @@ export function StartConversation({
       <button
         type="button"
         disabled
-        className={cn(ACTION, "border border-line text-caption text-muted")}
+        aria-label={status === "loading" ? "Connecting to messages" : "Messaging unavailable"}
+        className={cn(ACTION, SECONDARY, "text-muted")}
       >
-        {status === "loading" ? "Connecting to messages…" : "Messaging unavailable"}
+        <MessageCircle aria-hidden strokeWidth={2.25} className={cn(ICON, "text-muted")} />
+        {status === "loading" ? "Connecting…" : "Unavailable"}
       </button>,
     );
   }
@@ -109,13 +120,13 @@ function StartConnected({
         disabled={busy}
         onClick={() => void start()}
         aria-label="Message professional"
-        className={cn(ACTION, "border border-primary text-primary")}
+        className={cn(ACTION, SECONDARY)}
       >
-        <MessageCircle aria-hidden className="size-[18px]" />
+        <MessageCircle aria-hidden strokeWidth={2.25} className={ICON} />
         {busy ? "Opening…" : "Message"}
       </button>
       {error ? (
-        <p role="alert" className="mt-1.5 text-[11px] leading-[15px] text-error">
+        <p role="alert" className="mt-1.5 text-[11px] leading-[15px] text-danger">
           {error}
         </p>
       ) : null}

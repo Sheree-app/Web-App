@@ -2,7 +2,7 @@
 
 import { MessageCircle } from "lucide-react";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Inbox } from "./Inbox";
 import { conversationIdFromPath } from "./routes";
@@ -20,9 +20,16 @@ import { conversationIdFromPath } from "./routes";
 export function MessagesShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const activeId = conversationIdFromPath(pathname);
+  const frameRef = useVisibleViewport();
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-11rem)] min-h-[460px] w-full max-w-[520px] flex-col overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-5.5rem)] md:min-h-[520px] md:max-w-none md:flex-row lg:h-[calc(100dvh-7rem)] lg:min-h-[560px] lg:max-h-[900px] lg:max-w-[1120px]">
+    // Phone: pinned to all four edges, so it is always exactly full height (no
+    // computed height to come up short). The bottom edge lifts by the keyboard
+    // while typing, so the composer stays visible. From `md` up: the card.
+    <div
+      ref={frameRef}
+      className="fixed inset-x-0 top-[var(--vv-top,0px)] bottom-[var(--kb-inset,0px)] z-30 flex w-full flex-col overflow-hidden overscroll-none bg-surface md:static md:mx-auto md:h-[calc(100dvh-5.5rem)] md:min-h-[520px] md:flex-row md:rounded-card md:border md:border-line md:shadow-card lg:h-[calc(100dvh-7rem)] lg:min-h-[560px] lg:max-h-[900px] lg:max-w-[1120px]"
+    >
       {/* The list is always on screen once there is room for two panes; on a
           phone it yields to the thread. */}
       <div
@@ -46,6 +53,59 @@ export function MessagesShell({ children }: { children: ReactNode }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Keeps the phone frame inside the part of the screen the keyboard leaves free.
+ *
+ * Neither `100dvh` nor the layout viewport shrink for the on-screen keyboard
+ * (and iOS Safari pans the page instead), so the frame's top follows the
+ * visible viewport's offset and its bottom rises by the keyboard's height. With
+ * no keyboard both are 0 and the frame is simply `inset: 0`, full height.
+ *
+ * While Messages is open on a phone the page behind it can't scroll either:
+ * a scrolling page under a fixed frame is what makes iOS shift it around.
+ */
+function useVisibleViewport() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const frame = ref.current;
+    if (!frame) return;
+    const phone = window.matchMedia("(max-width: 767px)");
+    const root = document.documentElement;
+    const previousOverflow = root.style.overflow;
+    const lockPage = () => {
+      root.style.overflow = phone.matches ? "hidden" : previousOverflow;
+    };
+    lockPage();
+    phone.addEventListener("change", lockPage);
+
+    const viewport = window.visualViewport;
+    let frameId = 0;
+    const update = () => {
+      if (!viewport) return;
+      cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        const top = Math.max(0, viewport.offsetTop);
+        const keyboard = Math.max(0, window.innerHeight - viewport.height - top);
+        frame.style.setProperty("--vv-top", `${top}px`);
+        frame.style.setProperty("--kb-inset", `${keyboard}px`);
+      });
+    };
+    update();
+    viewport?.addEventListener("resize", update);
+    viewport?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      cancelAnimationFrame(frameId);
+      phone.removeEventListener("change", lockPage);
+      root.style.overflow = previousOverflow;
+      viewport?.removeEventListener("resize", update);
+      viewport?.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+  return ref;
 }
 
 /** What sits in the thread pane until a conversation is opened. */
