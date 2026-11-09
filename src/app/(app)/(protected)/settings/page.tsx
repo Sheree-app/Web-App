@@ -216,13 +216,13 @@ export default function SettingsPage() {
           icon={<FileText aria-hidden className="size-5 text-primary" />}
           title="Terms of Service"
           detail="The rules for using Sheree"
-          onPress={() => void openExternal("https://sheree.world/terms", "Terms of Service")}
+          onPress={() => router.push("/terms")}
         />
         <Row
           icon={<Lock aria-hidden className="size-5 text-primary" />}
           title="Privacy Policy"
           detail="How we collect and protect your data"
-          onPress={() => void openExternal("https://sheree.world/privacy", "Privacy Policy")}
+          onPress={() => router.push("/privacy")}
         />
       </Section>
 
@@ -302,15 +302,6 @@ export default function SettingsPage() {
       </Sheet>
     </div>
   );
-}
-
-async function openExternal(url: string, label: string) {
-  try {
-    const opened = window.open(url, "_blank", "noopener,noreferrer");
-    if (!opened) throw new Error("popup blocked");
-  } catch {
-    window.alert(`Couldn’t open ${label}\n\nTry again from your browser.`);
-  }
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

@@ -3,6 +3,7 @@
 import { AuthFooterPrompt, AuthLayout } from "@/components/shell/auth-layout";
 import { Button, FormError, Input, PasswordInput } from "@/components/ui";
 import { supabase } from "@/lib/supabase/client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -98,7 +99,15 @@ export default function SignUpPage() {
           onChange={(event) => setPassword(event.target.value)}
         />
         <p className="text-caption text-muted">
-          By creating an account, you agree to Sheree’s terms and privacy policy.
+          By creating an account, you agree to Sheree’s{" "}
+          <Link href="/terms" className="font-bold text-primary underline-offset-2 hover:underline">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="font-bold text-primary underline-offset-2 hover:underline">
+            Privacy Policy
+          </Link>
+          .
         </p>
         {error ? <FormError message={error} /> : null}
         <Button type="submit" loading={loading}>
