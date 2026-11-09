@@ -73,7 +73,12 @@ const themeBootScript = `(function(){try{var s=localStorage.getItem("sheree:appe
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const config = await getFeeConfig();
   return (
-    <html lang="en" className={`${jakarta.variable} ${sacramento.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${jakarta.variable} ${sacramento.variable}`}
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
