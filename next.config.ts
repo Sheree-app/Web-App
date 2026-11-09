@@ -51,6 +51,12 @@ const r2Host = (() => {
 
 const nextConfig: NextConfig = {
   env,
+  // Dev server only. Next blocks its dev scripts for any origin other than
+  // localhost, so opening the app from a phone at the Mac's network address
+  // (http://192.168.x.x:3001) served the HTML but never ran the JavaScript:
+  // nothing worked, and the sign-in form fell back to a plain page reload that
+  // just cleared the fields. These are the private (LAN / hotspot) ranges.
+  allowedDevOrigins: ["192.168.*.*", "10.*.*.*", "172.*.*.*", "*.local"],
   async headers() {
     const associationHeaders = [
       { key: "Content-Type", value: "application/json; charset=utf-8" },

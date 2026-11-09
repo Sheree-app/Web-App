@@ -2,9 +2,10 @@
 
 import type { Professional } from "@/features/explore/data";
 import { env } from "@/lib/env";
-import { formatDistance } from "@/lib/utils";
+import { cn, formatDistance } from "@/lib/utils";
+import { Expand, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /** Geographic centre of Ghana — the mobile app's fallback when location is off. */
 export const GHANA = { latitude: 7.9465, longitude: -1.0232 };
@@ -23,6 +24,7 @@ type GMap = {
   fitBounds(bounds: unknown, padding?: number | Record<string, number>): void;
   panTo(latLng: { lat: number; lng: number }): void;
   setZoom(zoom: number): void;
+  setOptions(options: Record<string, unknown>): void;
 };
 type GOverlayView = {
   setMap(map: GMap | null): void;
@@ -86,6 +88,38 @@ function loadGoogleMaps(key: string): Promise<GoogleMaps> {
   });
   return loader;
 }
+
+/* ------------------------------ Phone layout ------------------------------ */
+
+const PHONE_QUERY = "(max-width: 767px)";
+
+function subscribePhone(onChange: () => void) {
+  const query = window.matchMedia(PHONE_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/** Phones get a preview that opens full screen; larger screens get the inline map. */
+function useIsPhone() {
+  return useSyncExternalStore(
+    subscribePhone,
+    () => window.matchMedia(PHONE_QUERY).matches,
+    () => false,
+  );
+}
+
+/**
+ * How the map takes touches and the wheel:
+ * - phone preview: not at all, so swiping scrolls the page and a tap opens it;
+ * - phone full screen: one finger pans, like the mobile app (nothing else to scroll);
+ * - larger screens: drag pans, Ctrl/⌘ + wheel zooms, plain wheel scrolls the page.
+ */
+function gestureMode(isPhone: boolean, expanded: boolean) {
+  if (!isPhone) return "cooperative";
+  return expanded ? "greedy" : "none";
+}
+
+const MAP_HISTORY_KEY = "sheereMapOpen";
 
 const BRUSH_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 10 3 3"/><path d="M6.5 21A3.5 3.5 0 1 0 3 17.5a2.62 2.62 0 0 1-.708 1.792A1 1 0 0 0 3 21z"/><path d="M9.969 17.031 21.378 5.624a1 1 0 0 0-3.002-3.002L6.967 14.031"/></svg>';
@@ -187,6 +221,57 @@ export function ExploreMap({
     env.googleMapsApiKey ? "loading" : "unavailable",
   );
 
+  const isPhone = useIsPhone();
+  const [expanded, setExpanded] = useState(false);
+  const fullScreen = isPhone && expanded;
+
+  const openFullScreen = useCallback(() => {
+    // A history entry lets the phone's Back gesture close the map instead of
+    // leaving Explore.
+    window.history.pushState({ ...window.history.state, [MAP_HISTORY_KEY]: true }, "");
+    setExpanded(true);
+  }, []);
+
+  const closeFullScreen = useCallback(() => {
+    if (window.history.state?.[MAP_HISTORY_KEY]) window.history.back();
+    else setExpanded(false);
+  }, []);
+
+  // Back (button or gesture) pops the entry pushed on open.
+  useEffect(() => {
+    if (!expanded) return;
+    const onPopState = () => setExpanded(false);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [expanded]);
+
+  // Full screen owns the viewport: no page scroll behind it, Escape closes it.
+  useEffect(() => {
+    if (!fullScreen) return;
+    const root = document.documentElement;
+    const previous = root.style.overflow;
+    root.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeFullScreen();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      root.style.overflow = previous;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closeFullScreen, fullScreen]);
+
+  // Rotating or resizing past phone width while open drops back to inline.
+  useEffect(() => {
+    if (expanded && !isPhone) closeFullScreen();
+  }, [closeFullScreen, expanded, isPhone]);
+
+  // Same map instance in both layouts; only how it takes gestures changes.
+  useEffect(() => {
+    if (status !== "ready") return;
+    mapRef.current?.setOptions({ gestureHandling: gestureMode(isPhone, expanded) });
+  }, [expanded, isPhone, status]);
+
   const pinned = professionals.filter(
     (p) => typeof p.latitude === "number" && typeof p.longitude === "number",
   );
@@ -211,7 +296,7 @@ export function ExploreMap({
           disableDefaultUI: true,
           zoomControl: true,
           clickableIcons: false,
-          gestureHandling: "cooperative",
+          gestureHandling: gestureMode(window.matchMedia(PHONE_QUERY).matches, false),
         });
         setStatus("ready");
       })
@@ -277,7 +362,7 @@ export function ExploreMap({
 
   if (status === "unavailable") {
     return (
-      <div className="mx-4 mt-4 flex h-[520px] items-center justify-center rounded-card bg-raised px-6">
+      <div className="mx-4 mt-4 flex h-[420px] items-center justify-center rounded-card bg-raised px-6 md:h-[520px]">
         <p className="text-center text-caption font-bold text-ink">
           The map couldn’t load. Switch to List to browse professionals.
         </p>
@@ -286,8 +371,49 @@ export function ExploreMap({
   }
 
   return (
-    <div className="relative mx-4 mt-4 h-[520px] overflow-hidden rounded-card bg-raised">
+    <div
+      role={fullScreen ? "dialog" : undefined}
+      aria-modal={fullScreen ? true : undefined}
+      aria-label={fullScreen ? "Map of beauticians" : undefined}
+      className={cn(
+        "overflow-hidden bg-raised",
+        fullScreen
+          ? "fixed inset-0 z-[70] animate-fade"
+          : "relative mx-4 mt-4 h-[420px] rounded-card md:h-[520px]",
+      )}
+    >
       <div ref={containerRef} className="absolute inset-0" />
+
+      {isPhone && !expanded && status === "ready" ? (
+        // The preview ignores touches (see gestureMode), so this layer takes the
+        // tap; swipes still scroll the page because it isn't a scroll container.
+        <button
+          type="button"
+          onClick={openFullScreen}
+          aria-label="Open the map full screen"
+          className={cn(
+            "absolute inset-0 z-[1] flex justify-center",
+            // Clear of the "no pins" card, which sits along the bottom.
+            pinned.length === 0 ? "items-center" : "items-end pb-4",
+          )}
+        >
+          <span className="flex items-center gap-2 rounded-full bg-ink px-4 py-2.5 text-caption font-bold text-surface shadow-card">
+            <Expand aria-hidden className="size-4" />
+            Tap to explore the map
+          </span>
+        </button>
+      ) : null}
+
+      {fullScreen ? (
+        <button
+          type="button"
+          onClick={closeFullScreen}
+          aria-label="Close map"
+          className="absolute top-[calc(12px+env(safe-area-inset-top))] right-3 z-[2] flex size-11 items-center justify-center rounded-full bg-raised text-ink shadow-card"
+        >
+          <X aria-hidden className="size-5" />
+        </button>
+      ) : null}
 
       {status === "loading" ? (
         <div className="absolute inset-0 flex items-center justify-center">
@@ -295,7 +421,12 @@ export function ExploreMap({
         </div>
       ) : null}
 
-      <div className="pointer-events-none absolute top-3 left-3 flex items-center gap-1.5 rounded-full bg-raised px-2.5 py-2">
+      <div
+        className={cn(
+          "pointer-events-none absolute left-3 z-[2] flex items-center gap-1.5 rounded-full bg-raised px-2.5 py-2",
+          fullScreen ? "top-[calc(18px+env(safe-area-inset-top))]" : "top-3",
+        )}
+      >
         <span
           className="flex size-[22px] items-center justify-center rounded-full bg-primary text-surface [&_svg]:size-3"
           dangerouslySetInnerHTML={{ __html: BRUSH_SVG }}
@@ -307,7 +438,12 @@ export function ExploreMap({
       </div>
 
       {status === "ready" && pinned.length === 0 ? (
-        <div className="pointer-events-none absolute right-4 bottom-4 left-4 rounded-panel bg-raised p-4">
+        <div
+          className={cn(
+            "pointer-events-none absolute right-4 left-4 z-[2] rounded-panel bg-raised p-4",
+            fullScreen ? "bottom-[calc(16px+env(safe-area-inset-bottom))]" : "bottom-4",
+          )}
+        >
           <p className="text-body font-medium text-ink">No beauticians have added a map pin</p>
           <p className="mt-0.5 text-caption text-muted">
             {userLocation
