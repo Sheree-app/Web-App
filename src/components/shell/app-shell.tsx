@@ -1,5 +1,6 @@
 "use client";
 
+import { LegalFooter } from "@/components/legal/legal-links";
 import { BottomNav, SidebarNav } from "@/components/shell/bottom-nav";
 import {
   markNotificationOpened,
@@ -81,6 +82,14 @@ export function AppShell({ children, className }: { children: ReactNode; classNa
         >
           {children}
         </div>
+        {focusedFlow ? null : (
+          <LegalFooter
+            className={cn(
+              "mx-auto mt-12 w-full max-w-[520px] border-t border-line pt-6",
+              fullBleed ? "md:max-w-none" : "md:max-w-[720px]",
+            )}
+          />
+        )}
       </main>
 
       {focusedFlow ? null : <BottomNav mode={appMode} />}

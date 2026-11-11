@@ -2,6 +2,7 @@
 
 import { Wordmark } from "@/components/brand/wordmark";
 import { LookbookRail } from "@/components/brand/lookbook-rail";
+import { LegalFooter } from "@/components/legal/legal-links";
 import { cn } from "@/lib/utils";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -92,6 +93,7 @@ export function AuthLayout({
           )}
         </div>
       </div>
+      <LegalFooter className="relative mx-auto w-full max-w-6xl px-6 pt-2 pb-[calc(24px+env(safe-area-inset-bottom))] max-lg:items-center max-lg:text-center lg:pb-8 [&>nav]:max-lg:justify-center" />
     </div>
   );
 }

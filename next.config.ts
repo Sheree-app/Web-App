@@ -57,6 +57,10 @@ const nextConfig: NextConfig = {
   // nothing worked, and the sign-in form fell back to a plain page reload that
   // just cleared the fields. These are the private (LAN / hotspot) ranges.
   allowedDevOrigins: ["192.168.*.*", "10.*.*.*", "172.*.*.*", "*.local"],
+  // The policy page used to live at /privacy-policy; keep old links working.
+  async redirects() {
+    return [{ source: "/privacy-policy", destination: "/privacy", permanent: true }];
+  },
   async headers() {
     const associationHeaders = [
       { key: "Content-Type", value: "application/json; charset=utf-8" },

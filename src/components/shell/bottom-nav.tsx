@@ -2,6 +2,7 @@
 
 import { Avatar } from "@/components/ui";
 import { Wordmark } from "@/components/brand/wordmark";
+import { LEGAL_LINKS } from "@/components/legal/legal-links";
 import { MessageLink } from "@/features/messaging/MessageLink";
 import { useAuth, type AppMode } from "@/providers/auth-provider";
 import { cn } from "@/lib/utils";
@@ -255,11 +256,28 @@ export function SidebarNav({ mode }: { mode: AppMode }) {
         </Link>
       </div>
 
-      <div className="mt-auto flex w-full justify-center pt-4">
+      <div className="mt-auto flex w-full flex-col items-center gap-3 pt-4">
         <Link href="/help-support" aria-label="Help and links" className={itemClass(false)}>
           <Link2 className="size-5 shrink-0" />
           <span className={labelClass}>Help & links</span>
         </Link>
+        {/* Always visible, even with the rail collapsed: short labels at rest,
+            full names when the rail widens. */}
+        <nav
+          aria-label="Legal"
+          className="flex w-full flex-col items-center gap-1.5 border-t border-line/70 pt-3 text-[11px] leading-4 font-medium group-hover/sidebar:items-start group-hover/sidebar:px-3 group-hover/sidebar:text-caption"
+        >
+          {LEGAL_LINKS.slice(0, 2).map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="text-muted underline decoration-line underline-offset-2 transition hover:text-primary"
+            >
+              <span className="group-hover/sidebar:hidden">{link.label.split(" ")[0]}</span>
+              <span className="hidden group-hover/sidebar:inline">{link.label}</span>
+            </Link>
+          ))}
+        </nav>
       </div>
     </aside>
   );

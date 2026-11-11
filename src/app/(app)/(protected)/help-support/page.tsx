@@ -1,6 +1,8 @@
 import { ButtonLink } from "@/components/ui";
-import { ArrowLeft, Minus, Plus } from "lucide-react";
+import { LEGAL_LINKS } from "@/components/legal/legal-links";
+import { ArrowLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -83,6 +85,22 @@ export default function HelpSupportPage() {
               </summary>
               <p className="mt-2 text-caption text-muted">{answer}</p>
             </details>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-8 mb-1 text-eyebrow text-muted uppercase">Legal</p>
+
+      <ul className="flex flex-col gap-2">
+        {LEGAL_LINKS.map((link) => (
+          <li key={link.href}>
+            <Link
+              href={link.href}
+              className="flex items-center justify-between gap-3 rounded-panel bg-surface p-4 text-body font-medium text-ink transition hover:text-primary"
+            >
+              {link.label}
+              <ChevronRight aria-hidden className="size-5 shrink-0 text-primary" />
+            </Link>
           </li>
         ))}
       </ul>

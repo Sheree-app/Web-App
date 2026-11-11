@@ -1,12 +1,7 @@
 import { Wordmark } from "@/components/brand/wordmark";
+import { LEGAL_LINKS as LINKS } from "@/components/legal/legal-links";
 import Link from "next/link";
 import type { ReactNode } from "react";
-
-const LINKS = [
-  { href: "/terms", label: "Terms of Service" },
-  { href: "/privacy", label: "Privacy Policy" },
-  { href: "/account-deletion", label: "Delete your account" },
-] as const;
 
 /**
  * The frame around the public legal pages (`/terms`, `/privacy`). They sit
