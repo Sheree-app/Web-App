@@ -1,10 +1,20 @@
-import { supabase } from "@/lib/supabase";
+import { api } from "@/lib/api";
+import { AppError, errorCode, withServerMessage } from "@/lib/errors";
 
+/**
+ * Reviews through the Sheree API (`sheree-backend/docs/api/reviews.md`). The
+ * server applies the rules the app used to apply itself: only completed visits,
+ * the 60-day prompt window, and never a prompt to review your own profile.
+ */
 export type ReviewContext = {
   bookingId: string;
   professionalId: string;
   professionalName: string;
   avatarUrl: string | null;
+  /** Blue Verified Professional status. */
+  verified: boolean;
+  /** Pink Founding Beautician status — separate from Sheree's verified status. */
+  founding: boolean;
   serviceName: string;
   completedAt: string;
   existingReview: CustomerReview | null;
@@ -16,90 +26,17 @@ export type CustomerReview = {
   professionalId: string;
   professionalName: string;
   avatarUrl: string | null;
+  verified: boolean;
+  founding: boolean;
   serviceName: string;
   rating: number;
   body: string;
   createdAt: string;
 };
 
-type ReviewRow = {
-  id: string;
-  booking_id: string;
-  professional_id: string;
-  rating: number;
-  body: string;
-  created_at: string;
-  bookings:
-    | {
-        service_name: string;
-        professional_profiles:
-          | { display_name: string | null; business_name: string; profile_photo_url: string | null }
-          | Array<{ display_name: string | null; business_name: string; profile_photo_url: string | null }>
-          | null;
-      }
-    | Array<{
-        service_name: string;
-        professional_profiles:
-          | { display_name: string | null; business_name: string; profile_photo_url: string | null }
-          | Array<{ display_name: string | null; business_name: string; profile_photo_url: string | null }>
-          | null;
-      }>
-    | null;
-};
-
-const first = <T,>(value: T | T[] | null) =>
-  Array.isArray(value) ? value[0] ?? null : value;
-
-function mapReview(row: ReviewRow): CustomerReview {
-  const booking = first(row.bookings);
-  const professional = first(booking?.professional_profiles ?? null);
-  return {
-    id: row.id,
-    bookingId: row.booking_id,
-    professionalId: row.professional_id,
-    professionalName:
-      professional?.display_name || professional?.business_name || "Your professional",
-    avatarUrl: professional?.profile_photo_url ?? null,
-    serviceName: booking?.service_name ?? "Appointment",
-    rating: row.rating,
-    body: row.body,
-    createdAt: row.created_at,
-  };
-}
-
-export async function fetchReviewContext(bookingId: string): Promise<ReviewContext> {
-  const { data: booking, error } = await supabase
-    .from("bookings" as never)
-    .select("id,professional_id,service_name,ends_at,status,professional_profiles(display_name,business_name,profile_photo_url),reviews(id,booking_id,professional_id,rating,body,created_at)")
-    .eq("id", bookingId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!booking) throw new Error("This appointment could not be found.");
-  const row = booking as unknown as {
-    id: string;
-    professional_id: string;
-    service_name: string;
-    ends_at: string;
-    status: string;
-    professional_profiles: { display_name: string | null; business_name: string; profile_photo_url: string | null } | Array<{ display_name: string | null; business_name: string; profile_photo_url: string | null }> | null;
-    reviews: ReviewRow | ReviewRow[] | null;
-  };
-  if (row.status !== "completed")
-    throw new Error("You can review this appointment after it is completed.");
-  const professional = first(row.professional_profiles);
-  const review = first(row.reviews);
-  return {
-    bookingId: row.id,
-    professionalId: row.professional_id,
-    professionalName:
-      professional?.display_name || professional?.business_name || "Your professional",
-    avatarUrl: professional?.profile_photo_url ?? null,
-    serviceName: row.service_name,
-    completedAt: row.ends_at,
-    existingReview: review ? mapReview({ ...review, bookings: { service_name: row.service_name, professional_profiles: row.professional_profiles } }) : null,
-  };
-}
-
+/**
+ * The booking a customer still owes a review for, resolved when the app opens.
+ */
 export type PendingReview = {
   bookingId: string;
   professionalId: string;
@@ -111,85 +48,97 @@ export type PendingReview = {
   founding: boolean;
 };
 
-type PendingReviewProfessional = {
-  user_id: string | null;
-  display_name: string | null;
-  business_name: string | null;
-  profile_photo_url: string | null;
-  is_verified: boolean | null;
-  is_founding_beautician: boolean | null;
-};
-
-type PendingReviewRow = {
-  id: string;
-  customer_id: string;
-  professional_id: string;
-  service_name: string;
-  ends_at: string;
-  professional_profiles: PendingReviewProfessional | PendingReviewProfessional[] | null;
-  reviews: { id: string } | Array<{ id: string }> | null;
-};
-
 /**
- * How far back the rating prompt still asks. Older visits stay reviewable from
- * Bookings, but asking about them on every visit would feel like nagging.
- * Same window as the mobile app.
+ * How far back the app will still ask for a review. The server applies it
+ * (`GET /v1/reviews/pending`); kept here for screens that mention it.
  */
 export const PENDING_REVIEW_WINDOW_DAYS = 60;
 
-/**
- * The most recent completed appointment this member booked and hasn't rated,
- * for the "Appointment complete" prompt. Ported from the mobile app's
- * `fetchPendingReview`, query unchanged.
- */
-export async function fetchPendingReview(
-  userId: string,
-  now = Date.now(),
-): Promise<PendingReview | null> {
-  const since = new Date(now - PENDING_REVIEW_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await supabase
-    .from("bookings" as never)
-    .select(
-      "id,customer_id,professional_id,service_name,ends_at,professional_profiles(user_id,display_name,business_name,profile_photo_url,is_verified,is_founding_beautician),reviews(id)",
-    )
-    // The professional who served a visit can read the booking too; without
-    // this filter a professional in customer mode would be asked to rate herself.
-    .eq("customer_id", userId)
-    .eq("status", "completed")
-    .gte("ends_at", since)
-    .order("ends_at", { ascending: false })
-    .limit(12);
-  if (error) throw error;
-  // `booking_id` is unique on `reviews`, so any embedded review means the visit
-  // is already rated. Old self-bookings are skipped as well.
-  const row = ((data ?? []) as unknown as PendingReviewRow[]).find((candidate) => {
-    if (first(candidate.reviews)) return false;
-    return first(candidate.professional_profiles)?.user_id !== candidate.customer_id;
-  });
-  if (!row) return null;
-  const professional = first(row.professional_profiles);
-  return {
-    bookingId: row.id,
-    professionalId: row.professional_id,
-    professionalName:
-      professional?.business_name || professional?.display_name || "Your professional",
-    avatarUrl: professional?.profile_photo_url ?? null,
-    serviceName: row.service_name,
-    completedAt: row.ends_at,
-    verified: Boolean(professional?.is_verified),
-    founding: Boolean(professional?.is_founding_beautician),
-  };
+type VisitRow = {
+  booking_id: string;
+  service_name: string;
+  completed_at: string;
+  professional_id: string;
+  professional_name: string;
+  avatar_url: string | null;
+  verified: boolean;
+  founding: boolean;
+};
+type ReviewRow = {
+  id: string;
+  booking_id: string;
+  rating: number;
+  body: string;
+  created_at: string;
+  service_name: string;
+  professional_id: string;
+  professional_name: string;
+  avatar_url: string | null;
+  verified: boolean;
+  founding: boolean;
+};
+
+const toPending = (row: VisitRow): PendingReview => ({
+  bookingId: row.booking_id,
+  professionalId: row.professional_id,
+  professionalName: row.professional_name,
+  avatarUrl: row.avatar_url,
+  serviceName: row.service_name,
+  completedAt: row.completed_at,
+  verified: Boolean(row.verified),
+  founding: Boolean(row.founding),
+});
+
+const toReview = (row: ReviewRow): CustomerReview => ({
+  id: row.id,
+  bookingId: row.booking_id,
+  professionalId: row.professional_id,
+  professionalName: row.professional_name,
+  avatarUrl: row.avatar_url,
+  verified: Boolean(row.verified),
+  founding: Boolean(row.founding),
+  serviceName: row.service_name ?? "Appointment",
+  rating: row.rating,
+  body: row.body,
+  createdAt: row.created_at,
+});
+
+export async function fetchReviewContext(bookingId: string): Promise<ReviewContext> {
+  try {
+    const row = await api.get<VisitRow & { existing_review: ReviewRow | null }>(
+      `/v1/bookings/${encodeURIComponent(bookingId)}/review`,
+    );
+    return { ...toPending(row), existingReview: row.existing_review ? toReview(row.existing_review) : null };
+  } catch (error) {
+    if (errorCode(error) === "booking_not_found") throw new AppError("We couldn’t find this appointment.", "not_found");
+    if (errorCode(error) === "booking_not_completed")
+      throw new AppError("You can review this appointment after it’s completed.", "not_completed");
+    throw error;
+  }
 }
 
-/** Submits a review from its booking id alone (the prompt has no ReviewContext). */
+// The API acts on the signed-in user; the parameters keep the old signature.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function fetchPendingReview(_userId: string, _now = Date.now()): Promise<PendingReview | null> {
+  const { pending } = await api.get<{ pending: VisitRow | null }>("/v1/reviews/pending");
+  return pending ? toPending(pending) : null;
+}
+
+/**
+ * Submits a review from its booking id alone. The rating prompt rates without
+ * loading the full review screen first, so it does not need a `ReviewContext`.
+ * The server's refusals ("You can only review your own appointment.", "…after
+ * it is completed.") are written for the user and kept as `AppError`s.
+ */
 export async function submitBookingReview(bookingId: string, rating: number, body: string) {
-  const { error } = await supabase.rpc("submit_review" as never, {
-    review_booking_id: bookingId,
-    review_rating: rating,
-    review_body: body.trim(),
-  } as never);
-  if (error?.code === "23505") throw new Error("You have already reviewed this appointment.");
-  if (error) throw new Error(error.message || "The review could not be shared.");
+  try {
+    await api.post<ReviewRow>("/v1/reviews", { body: { booking_id: bookingId, rating, body: body.trim() } });
+  } catch (error) {
+    if (errorCode(error) === "already_reviewed")
+      throw new AppError("You’ve already reviewed this appointment.", "already_reviewed");
+    // Screens show `message` as-is, so only the server's user-facing refusals keep theirs.
+    throw withServerMessage(error);
+  }
 }
 
 export async function createReview(context: ReviewContext, rating: number, body: string) {
@@ -197,17 +146,5 @@ export async function createReview(context: ReviewContext, rating: number, body:
 }
 
 export async function fetchCustomerReviews(): Promise<CustomerReview[]> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return [];
-  const { data, error } = await supabase
-    .from("reviews" as never)
-    .select("id,booking_id,professional_id,rating,body,created_at,bookings!inner(service_name,professional_profiles(display_name,business_name,profile_photo_url))")
-    // Published reviews are public so profiles can show them; without this the
-    // member's own list would include everyone else's reviews too.
-    .eq("customer_id", user.id)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return ((data ?? []) as unknown as ReviewRow[]).map(mapReview);
+  return (await api.get<ReviewRow[]>("/v1/me/reviews")).map(toReview);
 }

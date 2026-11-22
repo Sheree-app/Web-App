@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { api } from "@/lib/api";
 import { fetchFeeConfig, financials, formatMoney, toCedis, type FeeConfig } from "@/lib/pricing";
 const Context = createContext<FeeConfig | null>(null);
 export function PricingProvider({ initialConfig, children }: {
@@ -8,7 +8,7 @@ export function PricingProvider({ initialConfig, children }: {
     children: React.ReactNode;
 }) {
     const [config, setConfig] = useState(initialConfig);
-    useEffect(() => { const refresh = () => { void fetchFeeConfig(supabase).then(setConfig); }; const timer = setInterval(refresh, 60000); window.addEventListener("focus", refresh); return () => { clearInterval(timer); window.removeEventListener("focus", refresh); }; }, []);
+    useEffect(() => { const refresh = () => { void fetchFeeConfig(() => api.get<unknown>("/v1/service-fee", { auth: "optional" })).then(setConfig); }; const timer = setInterval(refresh, 60000); window.addEventListener("focus", refresh); return () => { clearInterval(timer); window.removeEventListener("focus", refresh); }; }, []);
     return <Context.Provider value={config}>{children}</Context.Provider>;
 }
 export function usePricing() {

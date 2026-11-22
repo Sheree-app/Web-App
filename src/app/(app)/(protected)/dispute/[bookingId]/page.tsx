@@ -1,4 +1,5 @@
 "use client";
+import { userMessage } from "@/lib/errors";
 import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 
 import {
@@ -60,7 +61,7 @@ export default function DisputePage() {
       })
       .catch((cause: unknown) => {
         if (active) {
-          setError(cause instanceof Error ? cause.message : "This booking isn’t available.");
+          setError(userMessage(cause, "This booking isn’t available."));
         }
       })
       .finally(() => {
@@ -107,7 +108,7 @@ export default function DisputePage() {
       });
       setDone(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "That report couldn’t be sent.");
+      setError(userMessage(cause, "That report couldn’t be sent."));
     } finally {
       setSaving(false);
     }

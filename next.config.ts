@@ -8,6 +8,7 @@ import type { NextConfig } from "next";
  * without touching this file.
  */
 const env = {
+  NEXT_PUBLIC_API_URL: (process.env.NEXT_PUBLIC_API_URL || process.env.EXPO_PUBLIC_API_URL || "").trim(),
   NEXT_PUBLIC_CONVEX_URL: (process.env.NEXT_PUBLIC_CONVEX_URL || process.env.EXPO_PUBLIC_CONVEX_URL || "").trim(),
   NEXT_PUBLIC_SUPABASE_URL:
     process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",

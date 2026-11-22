@@ -2,7 +2,8 @@
 
 import { AuthLayout } from "@/components/shell/auth-layout";
 import { Button, FormError, Input } from "@/components/ui";
-import { supabase } from "@/lib/supabase/client";
+import { requestPasswordReset } from "@/features/auth/api";
+import { mapAuthError } from "@/features/auth/auth-errors";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -23,13 +24,14 @@ export default function ForgotPasswordPage() {
     }
 
     setLoading(true);
-    const { error: authError } = await supabase.auth.resetPasswordForEmail(normalizedEmail);
-    setLoading(false);
-
-    if (authError) {
-      setError(authError.message);
+    try {
+      await requestPasswordReset(normalizedEmail);
+    } catch (resetError) {
+      setLoading(false);
+      setError(mapAuthError(resetError, "forgot-password").message);
       return;
     }
+    setLoading(false);
 
     router.push(`/reset-password?email=${encodeURIComponent(normalizedEmail)}`);
   };

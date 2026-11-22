@@ -10,6 +10,7 @@ import {
   fetchAvailability,
   fetchBookingFulfilment,
   fetchBookingSlots,
+  fetchBookingStatus,
   fetchConversationPriceCard,
   fetchCustomBookingSlots,
   initializeDeposit,
@@ -22,6 +23,10 @@ import {
   type DayState,
 } from "@/features/booking/api";
 import { BookingConfirmation } from "@/features/messaging/BookingConfirmation";
+import { useConvex } from "convex/react";
+import { api as convexApi } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
+import { AppError, userMessage } from "@/lib/errors";
 import { useMessaging } from "@/providers/messaging-provider";
 import { formatTime12 } from "@/features/booking/time-format";
 import { resolveProfileId } from "@/features/profile/api";
@@ -100,6 +105,8 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const { status: messagingStatus } = useMessaging();
+  // Undefined when messaging isn't configured (no Convex provider).
+  const convex = useConvex() as ReturnType<typeof useConvex> | undefined;
   const serviceId = searchParams.get("service") ?? "";
   /** Set when the customer arrived from a conversation price card. */
   const priceCardId = searchParams.get("priceCard") ?? "";
@@ -165,23 +172,40 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     [customService, serviceId, services],
   );
 
+  // Only a price-card booking depends on messaging, so a catalogue booking
+  // never reloads when the messaging connection changes.
+  const cardGate = !priceCardId
+    ? "none"
+    : messagingStatus === "loading"
+      ? "wait"
+      : messagingStatus === "ready"
+        ? "ready"
+        : "unavailable";
   // One load for everything the checkout needs to describe itself.
   useEffect(() => {
     let active = true;
     const load = async () => {
       if (priceCardId) {
-        const card = await fetchConversationPriceCard(priceCardId);
+        // Price cards live in Convex: wait for messaging to sign in first.
+        if (cardGate === "wait") return;
+        if (cardGate !== "ready" || !convex) {
+          throw new AppError("Messaging isn’t available right now, so this price card can’t be opened. Try again shortly.");
+        }
+        // The booking link names the professional by account id (the chat peer).
+        const card = await fetchConversationPriceCard(priceCardId, professionalId, (id) =>
+          convex.query(convexApi.priceCards.get, { priceCardId: id as Id<"priceCards"> }),
+        );
         if (!card) {
-          throw new Error("This price card is no longer available.");
+          throw new AppError("This price card is no longer available.");
         }
         if (card.status === "cancelled") {
-          throw new Error("This price card was withdrawn by your professional.");
+          throw new AppError("This price card was withdrawn by your professional.");
         }
         if (card.status === "booked" || card.bookingId) {
-          throw new Error("This price card has already been booked.");
+          throw new AppError("This price card has already been booked.");
         }
         if (card.expiresAt && new Date(card.expiresAt).getTime() <= Date.now()) {
-          throw new Error("This price card has expired. Ask your professional for a fresh offer.");
+          throw new AppError("This price card has expired. Ask your professional for a fresh offer.");
         }
 
         const [nextName, nextFulfilment] = await Promise.all([
@@ -214,9 +238,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     load().catch((cause) => {
       if (!active) return;
       if (priceCardId) {
-        setCustomError(
-          cause instanceof Error ? cause.message : "This price card could not be opened.",
-        );
+        setCustomError(userMessage(cause, "This price card could not be opened.", "booking.priceCard"));
       }
       setLoadError(true);
       setReady(true);
@@ -225,7 +247,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
     return () => {
       active = false;
     };
-  }, [priceCardId, professionalId]);
+  }, [cardGate, convex, priceCardId, professionalId]);
 
   // A catalogue booking always starts from a chosen service. A price-card
   // booking already has one, so it never redirects to the service menu.
@@ -353,7 +375,9 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
         id = booking.id;
         setBookingId(id);
         setBookingReference(booking.reference);
-        setBookingStatus(booking.status);
+        // A deposit-free booking is already requested/confirmed; one awaiting
+        // payment shows its post-payment state once paid.
+        setBookingStatus(booking.status === "confirmed" ? "confirmed" : "requested");
         if (customCard) setCompletedCustomBookingId(id);
       }
 
@@ -364,6 +388,9 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
 
       const session = await initializeDeposit(id);
       if (session.paid) {
+        // Nothing was due: the server promoted the booking straight away.
+        const status = await fetchBookingStatus(id).catch(() => null);
+        if (status === "confirmed" || status === "requested") setBookingStatus(status);
         setStep("confirmed");
         return;
       }
@@ -384,7 +411,7 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
       } else {
         toast("Payment could not start", {
           tone: "error",
-          detail: cause instanceof Error ? cause.message : "Please try again.",
+          detail: userMessage(cause, "Please try again.", "booking.checkout"),
         });
       }
     } finally {

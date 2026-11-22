@@ -1,4 +1,5 @@
 "use client";
+import { userMessage } from "@/lib/errors";
 import { usePricing } from "@/providers/pricing-provider";
 
 import { Avatar, Skeleton, Spinner, Sheet } from "@/components/ui";
@@ -104,7 +105,7 @@ export default function StudioPage() {
       } else {
         showError(
           "Appointment unchanged",
-          cause instanceof Error ? cause.message : "Please try again.",
+          userMessage(cause, "Please try again."),
         );
       }
     } finally {

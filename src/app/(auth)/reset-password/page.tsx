@@ -2,28 +2,27 @@
 
 import { AuthLayout } from "@/components/shell/auth-layout";
 import { Button, FormError, FormSuccess, OtpField, PasswordInput } from "@/components/ui";
-import { supabase } from "@/lib/supabase/client";
-import { useAuth } from "@/providers/auth-provider";
-import { useRouter, useSearchParams } from "next/navigation";
+import { requestPasswordReset, resetPassword } from "@/features/auth/api";
+import { mapAuthError } from "@/features/auth/auth-errors";
+import { homeRoute, useAuth } from "@/providers/auth-provider";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const RESEND_SECONDS = 60;
 
 /**
- * Password recovery, in the two beats the mobile app used: prove the code, then
- * set the new password. Landing here from a recovery link (no `email` param)
- * means the session already exists, so the code step is skipped.
+ * Password recovery in the two beats the mobile app uses: type the emailed
+ * code, then the new password. The API checks the code and sets the password
+ * in one call (`POST /v1/auth/password/reset`), which also signs every other
+ * device out and this one in, so the code is only held here until then.
  */
 export default function ResetPasswordPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const { setPasswordReset } = useAuth();
+  const { startSession } = useAuth();
+  const email = (searchParams.get("email") ?? "").trim().toLowerCase();
 
-  const email = searchParams.get("email") ?? "";
-  const step = searchParams.get("step");
-  const recovery = Boolean(email);
-  const verified = !recovery || step === "password";
-
+  const [step, setStep] = useState<"code" | "password">("code");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -31,14 +30,8 @@ export default function ResetPasswordPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
-  const [seconds, setSeconds] = useState(recovery ? RESEND_SECONDS : 0);
-  const [done, setDone] = useState(false);
-
-  // Recovery sessions may only touch the password, nothing else in the app.
-  useEffect(() => {
-    if (recovery) setPasswordReset(true);
-    return () => setPasswordReset(false);
-  }, [recovery, setPasswordReset]);
+  const [seconds, setSeconds] = useState(RESEND_SECONDS);
+  const [done, setDone] = useState<string | null>(null);
 
   useEffect(() => {
     if (seconds <= 0) return;
@@ -46,36 +39,16 @@ export default function ResetPasswordPage() {
     return () => window.clearInterval(timer);
   }, [seconds]);
 
-  const verifyCode = async (token?: string) => {
+  const continueWithCode = (token?: string) => {
     const candidate = token ?? code;
     if (candidate.length !== 6) {
       setError("Enter the complete six-digit code.");
       return;
     }
-    setPasswordReset(true);
-    setLoading(true);
+    setCode(candidate);
     setError("");
     setNotice("");
-
-    const { data, error: verifyError } = await supabase.auth.verifyOtp({
-      email,
-      token: candidate,
-      type: "recovery",
-    });
-
-    setLoading(false);
-
-    if (verifyError || !data.session) {
-      setCode("");
-      setError(
-        verifyError?.message.toLowerCase().includes("expired")
-          ? "That code has expired. Request a fresh one below."
-          : "That code isn’t right. Check the email and try again.",
-      );
-      return;
-    }
-
-    router.replace(`/reset-password?email=${encodeURIComponent(email)}&step=password`);
+    setStep("password");
   };
 
   const resend = async () => {
@@ -83,17 +56,16 @@ export default function ResetPasswordPage() {
     setResending(true);
     setError("");
     setNotice("");
-
-    const { error: resendError } = await supabase.auth.resetPasswordForEmail(email);
-
-    setResending(false);
-    if (resendError) {
-      setError(resendError.message);
-      return;
+    try {
+      await requestPasswordReset(email);
+      setCode("");
+      setSeconds(RESEND_SECONDS);
+      setNotice("A fresh code is on its way.");
+    } catch (resendError) {
+      setError(mapAuthError(resendError, "forgot-password").message);
+    } finally {
+      setResending(false);
     }
-    setCode("");
-    setSeconds(RESEND_SECONDS);
-    setNotice("A fresh code is on its way.");
   };
 
   const updatePassword = async (event: React.FormEvent) => {
@@ -110,34 +82,55 @@ export default function ResetPasswordPage() {
     }
 
     setLoading(true);
-    const { error: updateError } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-
-    if (updateError) {
-      setError(updateError.message);
-      return;
+    try {
+      const tokens = await resetPassword(email, code, password);
+      const profile = await startSession(tokens, email);
+      setDone(homeRoute(profile));
+    } catch (resetError) {
+      const failure = mapAuthError(resetError, "reset-code");
+      if (failure.clearCode) {
+        // The code itself was the problem: back to the code step.
+        setCode("");
+        setStep("code");
+      }
+      setError(failure.message);
+    } finally {
+      setLoading(false);
     }
-    setPasswordReset(false);
-    setDone(true);
   };
+
+  if (!email) {
+    return (
+      <AuthLayout
+        eyebrow="Password reset"
+        title="Start with your email."
+        subtitle="We need the email on your account to send a reset code."
+        backTo="/sign-in"
+      >
+        <Link href="/forgot-password" className="text-center font-medium text-primary underline-offset-4 hover:underline">
+          Get a reset code
+        </Link>
+      </AuthLayout>
+    );
+  }
 
   if (done) {
     return (
       <AuthLayout
         eyebrow="Password updated"
         title="You’re back in."
-        subtitle="Your new password is active."
+        subtitle="Your new password is active, and other devices have been signed out."
         back={false}
       >
         <div className="flex flex-col gap-4">
           <FormSuccess message="Your password was changed securely." />
-          <Button onClick={() => router.replace("/")}>Continue to Sheree</Button>
+          <Button onClick={() => window.location.replace(done)}>Continue to Sheree</Button>
         </div>
       </AuthLayout>
     );
   }
 
-  if (!verified) {
+  if (step === "code") {
     return (
       <AuthLayout
         eyebrow="Check your email"
@@ -153,13 +146,11 @@ export default function ResetPasswordPage() {
               setCode(next);
             }}
             invalid={Boolean(error)}
-            onComplete={(complete) => void verifyCode(complete)}
+            onComplete={(complete) => continueWithCode(complete)}
           />
           {error ? <FormError message={error} /> : null}
           {notice ? <FormSuccess message={notice} /> : null}
-          <Button loading={loading} onClick={() => void verifyCode()}>
-            Continue
-          </Button>
+          <Button onClick={() => continueWithCode()}>Continue</Button>
           <button
             type="button"
             onClick={() => void resend()}
@@ -199,6 +190,13 @@ export default function ResetPasswordPage() {
         <Button type="submit" loading={loading}>
           Save new password
         </Button>
+        <button
+          type="button"
+          onClick={() => setStep("code")}
+          className="text-center text-caption font-medium text-primary underline-offset-4 transition hover:underline"
+        >
+          Change the code
+        </button>
       </form>
     </AuthLayout>
   );

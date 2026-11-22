@@ -1,5 +1,5 @@
-import { env } from "@/lib/env";
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
+import { errorCode, userMessage } from "@/lib/errors";
 import { processMediaVariants } from "./processing";
 import type {
   MediaAsset,
@@ -14,7 +14,6 @@ import type {
 } from "./types";
 import { isMediaPurpose, validateMediaAsset } from "./validation";
 
-const FUNCTION_NAME = "media-storage";
 const RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 700;
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -24,6 +23,22 @@ export class MediaUploadError extends Error {
     super(message);
     this.name = "MediaUploadError";
   }
+}
+
+/**
+ * Turns a failed media API call (`sheree-backend/docs/api/media.md`) into a
+ * MediaUploadError carrying copy we wrote.
+ */
+function apiFailure(error: unknown, fallback: string): MediaUploadError {
+  switch (errorCode(error)) {
+    case "business_profile_required":
+      return new MediaUploadError("Finish setting up your professional profile before uploading.");
+    case "rate_limited":
+      return new MediaUploadError("You've uploaded a lot in the last hour. Please try again later.");
+    case "upload_rejected":
+      return new MediaUploadError("That file couldn't be used. Try a different photo.");
+  }
+  return new MediaUploadError(userMessage(error, fallback, "media.api"));
 }
 
 class RetryableStatusError extends Error {
@@ -43,7 +58,7 @@ function isRetryableStatus(status: number): boolean {
 
 function statusMessage(status: number, variant: string): string {
   // This PUT goes straight to R2 and is authorized by the presigned URL, not by
-  // the Supabase session. A 401/403 here means the upload link is invalid or
+  // the Sheree session. A 401/403 here means the upload link is invalid or
   // expired — never that the user's session ended.
   if (status === 413) return `${variant} is too large to upload.`;
   if (status === 401 || status === 403) {
@@ -147,15 +162,15 @@ async function requestPresignedUpload(
   purpose: MediaPurpose,
   variants: ProcessedVariant[],
 ): Promise<PresignedUpload> {
-  const { data, error } = await supabase.functions.invoke<PresignedUpload>(FUNCTION_NAME, {
-    body: { action: "create-upload", purpose, variants: variantPayload(variants) },
-  });
-  if (error || !data?.variants?.length) {
-    throw new MediaUploadError(
-      error?.message || "Cloud media storage is unavailable. Please try again shortly.",
-    );
+  try {
+    const data = await api.post<PresignedUpload>("/v1/media/uploads", {
+      body: { kind: "image", purpose, variants: variantPayload(variants) },
+    });
+    if (!data?.variants?.length) throw new Error("No upload URLs returned");
+    return data;
+  } catch (error) {
+    throw apiFailure(error, "Cloud media storage is unavailable. Please try again shortly.");
   }
-  return data;
 }
 
 /** Confirms every variant landed, persisting metadata in the `media` table. */
@@ -164,77 +179,24 @@ async function confirmUpload(
   presigned: PresignedUpload,
   variants: ProcessedVariant[],
 ): Promise<MediaRecord> {
-  const { data, error } = await supabase.functions.invoke<{ media: MediaRecord }>(FUNCTION_NAME, {
-    body: {
-      action: "complete",
-      purpose,
-      mediaId: presigned.mediaId,
-      variants: variantPayload(variants),
-    },
-  });
-  if (error || !data?.media) {
-    throw new MediaUploadError(
-      error?.message || "The image was uploaded but could not be saved. Please try again.",
+  try {
+    const data = await api.post<{ media: MediaRecord }>(
+      `/v1/media/uploads/${encodeURIComponent(presigned.mediaId)}/complete`,
+      { body: { kind: "image", purpose, variants: variantPayload(variants) } },
     );
+    if (!data?.media) throw new Error("No media record returned");
+    return data.media;
+  } catch (error) {
+    throw apiFailure(error, "The image was uploaded but could not be saved. Please try again.");
   }
-  return data.media;
-}
-
-function supabaseBucketFor(purpose: MediaPurpose): "avatars" | "portfolio" {
-  return purpose === "profile" ? "avatars" : "portfolio";
-}
-
-/** True when the project is configured to store media in Cloudflare R2. */
-export function isR2Enabled(): boolean {
-  return env.mediaStorageProvider === "r2";
 }
 
 /**
- * Rollback path: uploads to Supabase Storage when R2 has not been enabled.
- * No variants are generated; the original URL is reused for every delivery size.
+ * Images always go to R2 through the API now; kept for callers that still ask.
+ * `NEXT_PUBLIC_MEDIA_STORAGE_PROVIDER` no longer changes anything.
  */
-async function uploadToSupabase(
-  purpose: MediaPurpose,
-  asset: MediaAsset,
-  options: UploadOptions,
-): Promise<UploadedMedia> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new MediaUploadError("Sign in again to upload.");
-
-  const variants = await processMediaVariants(asset, { quality: options.quality });
-  const original = variants.find((v) => v.name === "original") ?? variants[0];
-  const bucket = supabaseBucketFor(purpose);
-  const key = `${user.id}/${crypto.randomUUID()}.webp`;
-
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(key, original.blob, { contentType: original.mimeType, upsert: false });
-  if (error) throw new MediaUploadError("Your image could not be uploaded. Please try again.");
-
-  const publicUrl = supabase.storage.from(bucket).getPublicUrl(key).data.publicUrl;
-  const variantMap = {} as UploadedMedia["variants"];
-  for (const name of ["thumbnail", "feed", "original"] as const) {
-    variantMap[name] = { key, publicUrl, width: original.width, height: original.height };
-  }
-  options.onProgress?.({
-    variant: "original",
-    loaded: original.size,
-    total: original.size,
-    fraction: 1,
-  });
-
-  return {
-    provider: "supabase",
-    mediaId: null,
-    purpose,
-    bucketKey: key,
-    width: original.width,
-    height: original.height,
-    variants: variantMap,
-    publicUrl,
-  };
+export function isR2Enabled(): boolean {
+  return true;
 }
 
 /**
@@ -246,8 +208,8 @@ async function uploadToSupabase(
  *   4. PUT each variant directly to R2 (progress + retry)
  *   5. confirm, persisting metadata in the `media` table
  *
- * The backend never sees image bytes. When R2 is not enabled the upload falls
- * back to Supabase Storage so the app stays operational.
+ * The backend never sees image bytes. (The old Supabase Storage fallback is
+ * gone: the API always stores images on R2.)
  */
 export async function uploadMedia(
   purpose: MediaPurpose,
@@ -256,8 +218,6 @@ export async function uploadMedia(
 ): Promise<UploadedMedia> {
   if (!isMediaPurpose(purpose)) throw new MediaUploadError("Invalid upload purpose.");
   validateMediaAsset(asset);
-
-  if (!isR2Enabled()) return uploadToSupabase(purpose, asset, options);
 
   const variants = await processMediaVariants(asset, { quality: options.quality });
   const presigned = await requestPresignedUpload(purpose, variants);
@@ -293,11 +253,10 @@ export async function uploadMedia(
   };
 }
 
-/** Normalizes a full upload result into something the Edge Function can delete. */
+/** Normalizes a full upload result into something the API can delete. */
 function toDeletionTarget(target: MediaDeletionTarget | UploadedMedia): MediaDeletionTarget {
   if ("bucketKey" in target) {
-    // Falling back to the portfolio bucket mirrors the native behaviour: legacy
-    // profile images also live there once R2 is off.
+    if (target.mediaId) return { mediaId: target.mediaId };
     return target.provider === "supabase"
       ? { provider: "supabase", bucket: "portfolio", key: target.bucketKey }
       : { provider: "r2", key: target.bucketKey };
@@ -305,10 +264,31 @@ function toDeletionTarget(target: MediaDeletionTarget | UploadedMedia): MediaDel
   return target;
 }
 
-/** Marks an uploaded object for deletion through the same Edge Function. */
+/** Deletes an uploaded object through `/v1/media`. */
 export async function deleteMedia(target: MediaDeletionTarget | UploadedMedia): Promise<void> {
-  const { error } = await supabase.functions.invoke(FUNCTION_NAME, {
-    body: { action: "delete", ...toDeletionTarget(target) },
-  });
-  if (error) throw new MediaUploadError(error.message || "That image could not be removed.");
+  const resolved = toDeletionTarget(target);
+  try {
+    if ("mediaId" in resolved) {
+      await api.delete<void>(`/v1/media/${encodeURIComponent(resolved.mediaId)}`);
+      return;
+    }
+    if (resolved.provider === "cloudinary") {
+      await api.post<void>("/v1/media/deletions", {
+        body: { provider: "cloudinary", publicId: resolved.publicId },
+      });
+      return;
+    }
+    if (resolved.provider === "supabase") {
+      // Files from before R2 live in Supabase Storage, which the app can no
+      // longer reach. They stay where they are (old rows still reference them).
+      return;
+    }
+    await api.post<void>("/v1/media/deletions", { body: { key: resolved.key } });
+  } catch (error) {
+    throw new MediaUploadError(
+      errorCode(error) === "not_allowed"
+        ? "That file isn’t yours to remove."
+        : "That image could not be removed.",
+    );
+  }
 }

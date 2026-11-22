@@ -2,7 +2,7 @@
 
 import { Sheet, Switch } from "@/components/ui";
 import { deleteAccount, fetchWantsProfessionalAccount, setWantsProfessionalAccount } from "@/features/account/api";
-import { supabase } from "@/lib/supabase/client";
+import { userMessage } from "@/lib/errors";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme, type AppearancePreference } from "@/providers/theme-provider";
 import { useToast } from "@/providers/toast-provider";
@@ -75,7 +75,7 @@ export default function SettingsPage() {
       setWantsProfessional(value);
       await refreshProfile();
     } catch (cause) {
-      showError("Preference not saved", cause instanceof Error ? cause.message : "Try again.");
+      showError("Preference not saved", userMessage(cause, "Try again."));
     } finally {
       setProfessionalSaving(false);
     }
@@ -89,7 +89,8 @@ export default function SettingsPage() {
       router.replace("/");
     } catch (cause) {
       setDeleting(false);
-      showError("Account not deleted", cause instanceof Error ? cause.message : "Try again.");
+      // Open bookings or payouts refuse it with a message written for the user.
+      showError("Account not deleted", userMessage(cause, "Try again."));
     }
   };
 
@@ -180,7 +181,7 @@ export default function SettingsPage() {
           icon={<Key aria-hidden className="size-5 text-primary" />}
           title="Password"
           detail="Change or reset your password"
-          onPress={() => router.push("/reset-password")}
+          onPress={() => router.push("/change-password")}
         />
         <Row
           icon={<ShieldCheck aria-hidden className="size-5 text-primary" />}
@@ -341,5 +342,3 @@ function Row({
     </button>
   );
 }
-
-void supabase;

@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { api } from "@/lib/api";
 
 export type SearchKind = "professional" | "service" | "post" | "category";
 export type SearchResult = {
@@ -26,6 +26,7 @@ export type SearchPricing = {
   sort: PriceSort;
   includeUnpriced: boolean;
 };
+/** `GET /v1/search` (`sheree-backend/docs/api/discovery.md`). */
 type Row = {
   kind: SearchKind;
   id: string;
@@ -35,47 +36,54 @@ type Row = {
   category: string;
   location: string;
   image: string | null;
-  price: number | string | null;
-  rating: number | string;
+  price: number | null;
+  rating: number;
   review_count: number;
   verified: boolean;
   available: boolean;
-  aspect_ratio: number | string | null;
+  aspect_ratio: number | null;
   created_at: string;
   rank: number;
 };
 
+/**
+ * One list of professionals, services, posts and categories. The API labels
+ * rows with the public business name and turns stored service photo paths into
+ * URLs, which this module used to do itself.
+ */
 export async function searchMarketplace(
   query: string,
   pricing: SearchPricing,
   minimumRating: number,
-) {
-  const { data, error } = await supabase.rpc(
-    "search_marketplace" as never,
-    {
-      query_text: query,
-      result_limit: 100,
-      minimum_price: pricing.minimum,
-      maximum_price: pricing.maximum,
-      minimum_rating: minimumRating,
-      price_sort: pricing.sort,
+): Promise<SearchResult[]> {
+  const rows = await api.get<Row[]>("/v1/search", {
+    auth: "optional",
+    query: {
+      q: query,
+      limit: 100,
+      min_price: pricing.minimum,
+      max_price: pricing.maximum,
+      min_rating: minimumRating,
+      sort: pricing.sort,
       include_unpriced: pricing.includeUnpriced,
-    } as never,
-  );
-  if (error) throw error;
-  return ((data ?? []) as Row[]).map((row) => ({
-    ...row,
+    },
+  });
+  return rows.map((row) => ({
+    kind: row.kind,
+    id: row.id,
     professionalId: row.professional_id,
+    title: row.title,
+    subtitle: row.subtitle,
+    category: row.category,
+    location: row.location,
+    image: row.image,
     price: row.price === null ? null : Number(row.price),
     rating: Number(row.rating),
     reviewCount: Number(row.review_count),
+    verified: row.verified,
+    available: row.available,
     aspectRatio: row.aspect_ratio === null ? null : Number(row.aspect_ratio),
-    image: serviceImage(row.kind, row.image),
     createdAt: row.created_at,
+    rank: row.rank,
   }));
-}
-function serviceImage(kind: SearchKind, value: string | null) {
-  if (!value || kind !== "service" || /^https?:\/\//.test(value)) return value;
-  return supabase.storage.from("profile-media").getPublicUrl(value).data
-    .publicUrl;
 }

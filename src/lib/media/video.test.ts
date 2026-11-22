@@ -18,13 +18,11 @@ import {
   VIDEO_MESSAGES,
 } from "./video";
 
-const invoke = vi.fn();
+const post = vi.fn();
 
-vi.mock("@/lib/supabase/client", () => ({
-  supabase: {
-    functions: {
-      invoke: (...args: unknown[]) => invoke(...args),
-    },
+vi.mock("@/lib/api", () => ({
+  api: {
+    post: (...args: unknown[]) => post(...args),
   },
 }));
 
@@ -54,7 +52,7 @@ const TICKET = {
 };
 
 beforeEach(() => {
-  invoke.mockReset();
+  post.mockReset();
 });
 
 afterEach(() => {
@@ -194,16 +192,15 @@ describe("poster handoff", () => {
 });
 
 describe("signed Cloudinary upload contract", () => {
-  it("requests a video ticket from media-storage", async () => {
-    invoke.mockResolvedValue({ data: TICKET, error: null });
+  it("requests a video ticket from the media API", async () => {
+    post.mockResolvedValue(TICKET);
 
     const ticket = await requestVideoUploadTicket(CLIP);
 
-    expect(invoke).toHaveBeenCalledTimes(1);
-    const [fnName, options] = invoke.mock.calls[0] as [string, { body: Record<string, unknown> }];
-    expect(fnName).toBe("media-storage");
+    expect(post).toHaveBeenCalledTimes(1);
+    const [path, options] = post.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    expect(path).toBe("/v1/media/uploads");
     expect(options.body).toEqual({
-      action: "create-upload",
       kind: "video",
       provider: "cloudinary",
       purpose: "post",
@@ -213,7 +210,7 @@ describe("signed Cloudinary upload contract", () => {
   });
 
   it("fails clearly when the ticket is malformed", async () => {
-    invoke.mockResolvedValue({ data: { whatever: true }, error: null });
+    post.mockResolvedValue({ whatever: true });
     await expect(requestVideoUploadTicket(CLIP)).rejects.toThrow(/unavailable/i);
   });
 
@@ -272,31 +269,30 @@ describe("signed Cloudinary upload contract", () => {
     ).rejects.toThrow("Invalid Signature");
   });
 
-  it("confirms the clip with media-storage", async () => {
-    invoke.mockResolvedValue({
-      data: { provider: "cloudinary", media: { id: "media-1", bucket_key: "post/media-1" } },
-      error: null,
+  it("confirms the clip with the media API", async () => {
+    post.mockResolvedValue({
+      provider: "cloudinary",
+      media: { id: "media-1", bucket_key: "post/media-1" },
     });
 
     await completeVideoUpload(TICKET, CLIP);
 
-    const [, options] = invoke.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    const [path, options] = post.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    expect(path).toBe("/v1/media/uploads/media-1/complete");
     expect(options.body).toEqual({
-      action: "complete",
       kind: "video",
       provider: "cloudinary",
       purpose: "post",
-      mediaId: "media-1",
       publicId: "post/media-1",
       clip: CLIP,
     });
   });
 
   it("deletes the uploaded clip when confirmation fails", async () => {
-    invoke
-      .mockResolvedValueOnce({ data: TICKET, error: null })
-      .mockResolvedValueOnce({ data: null, error: { message: "registry down" } })
-      .mockResolvedValueOnce({ data: { deleted: true }, error: null });
+    post
+      .mockResolvedValueOnce(TICKET)
+      .mockRejectedValueOnce(new Error("registry down"))
+      .mockResolvedValueOnce(undefined);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -313,21 +309,21 @@ describe("signed Cloudinary upload contract", () => {
     );
 
     await expect(uploadVideo(new Blob(["x"], { type: "video/mp4" }), CLIP)).rejects.toThrow(
-      "registry down",
+      /could not be saved/,
     );
 
-    const [, deleteOptions] = invoke.mock.calls[2] as [string, { body: Record<string, unknown> }];
+    const [deletePath, deleteOptions] = post.mock.calls[2] as [string, { body: Record<string, unknown> }];
+    expect(deletePath).toBe("/v1/media/deletions");
     expect(deleteOptions.body).toEqual({
-      action: "delete",
       provider: "cloudinary",
       publicId: "post/media-1",
     });
   });
 
   it("runs ticket → direct upload → confirmation", async () => {
-    invoke.mockResolvedValueOnce({ data: TICKET, error: null }).mockResolvedValueOnce({
-      data: { provider: "cloudinary", media: { id: "media-1", bucket_key: "post/media-1" } },
-      error: null,
+    post.mockResolvedValueOnce(TICKET).mockResolvedValueOnce({
+      provider: "cloudinary",
+      media: { id: "media-1", bucket_key: "post/media-1" },
     });
     vi.stubGlobal(
       "fetch",
@@ -346,7 +342,7 @@ describe("signed Cloudinary upload contract", () => {
 
     const uploaded = await uploadVideo(new Blob(["x"], { type: "video/mp4" }), CLIP);
 
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenCalledTimes(2);
     expect(uploaded).toMatchObject({
       provider: "cloudinary",
       mediaId: "media-1",
@@ -358,16 +354,16 @@ describe("signed Cloudinary upload contract", () => {
 });
 
 describe("clip deletion", () => {
-  it("sends the extracted public id to media-storage", async () => {
-    invoke.mockResolvedValue({ data: { deleted: true }, error: null });
+  it("sends the extracted public id to the media API", async () => {
+    post.mockResolvedValue(undefined);
 
     await deleteCloudinaryVideo(
       "https://res.cloudinary.com/sheree/video/upload/q_auto,w_720/v3/post/media-1.mp4",
     );
 
-    const [, options] = invoke.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    const [path, options] = post.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    expect(path).toBe("/v1/media/deletions");
     expect(options.body).toEqual({
-      action: "delete",
       provider: "cloudinary",
       publicId: "post/media-1",
     });

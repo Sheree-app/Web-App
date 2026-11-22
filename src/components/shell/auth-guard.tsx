@@ -20,7 +20,7 @@ export function AuthGuard({
   children: React.ReactNode;
   requireOnboarded?: boolean;
 }) {
-  const { loading, signedIn, needsOnboarding, emailVerified, passwordReset } = useAuth();
+  const { loading, signedIn, needsOnboarding } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -30,27 +30,10 @@ export function AuthGuard({
       router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
       return;
     }
-    if (passwordReset) {
-      router.replace("/reset-password");
-      return;
-    }
-    if (!emailVerified) {
-      router.replace("/verify-email");
-      return;
-    }
     if (requireOnboarded && needsOnboarding) {
       router.replace("/onboarding");
     }
-  }, [
-    emailVerified,
-    loading,
-    needsOnboarding,
-    passwordReset,
-    pathname,
-    requireOnboarded,
-    router,
-    signedIn,
-  ]);
+  }, [loading, needsOnboarding, pathname, requireOnboarded, router, signedIn]);
 
   if (loading || !signedIn || (requireOnboarded && needsOnboarding)) {
     return (

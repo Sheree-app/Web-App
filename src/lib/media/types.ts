@@ -6,8 +6,8 @@
  * have to re-read it from disk.
  *
  * The flow: validate → optimize (WebP, EXIF/GPS stripped by re-encoding, resized
- * variants) → short-lived presigned PUT URLs from the `media-storage` Edge
- * Function → upload straight to Cloudflare R2 → confirm so metadata lands in the
+ * variants) → short-lived presigned PUT URLs from the API (`/v1/media`, formerly the Edge
+ * Function) → upload straight to Cloudflare R2 → confirm so metadata lands in the
  * `media` table.
  */
 

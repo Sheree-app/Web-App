@@ -4,7 +4,8 @@ import { Button, Checkbox, FormError, Input, Spinner, Textarea } from "@/compone
 import { categoryImage } from "@/features/explore/category-images";
 import { fetchExploreCategories } from "@/features/explore/api";
 import type { Category } from "@/features/explore/data";
-import { db } from "@/lib/supabase/untyped";
+import { api } from "@/lib/api";
+import { userMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
@@ -183,32 +184,55 @@ export default function OnboardingPage() {
     setSaving(true);
     setError("");
 
-    const depositValue = noDeposit ? 0 : Number(deposit);
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && !/^[\d\s+()-]{6,20}$/.test(trimmedPhone)) {
+      setSaving(false);
+      setError("Enter a valid phone number, or leave it empty.");
+      return;
+    }
 
-    const { error: rpcError } =
-      role === "customer"
-        ? await db.rpc("complete_customer_onboarding", { interest_slugs: selected })
-        : await db.rpc("complete_professional_onboarding", {
+    try {
+      if (role === "customer") {
+        // The API takes interests by id; the wizard tracks slugs.
+        const interestIds = categories
+          .filter((category) => selected.includes(category.slug))
+          .map((category) => category.id);
+        await api.put("/v1/me/interests", { body: { interest_ids: interestIds } });
+        await api.post<void>("/v1/onboarding/customer", {
+          body: trimmedPhone ? { phone: trimmedPhone } : {},
+        });
+      } else {
+        // TODO(api): the deposit step has no effect any more; the server always
+        // applies the platform deposit and `deposit` is not accepted.
+        await api.post<void>("/v1/onboarding/professional", {
+          body: {
             category_slug: selected[0],
-            business_name_value: business.trim(),
-            display_name_value: display.trim() || business.trim(),
-            bio_value: bio.trim(),
-            years_experience_value: null,
-            business_address_value: "",
-            travel_radius_value: null,
-            offers_mobile_value: false,
-            deposit_value: depositValue,
-            cancellation_policy_value: "",
-            open_day_numbers: openDays.map((day) => DAY_NUMBERS[day as (typeof DAYS)[number]]),
-            instagram_url_value: instagram.trim()
+            business_name: business.trim(),
+            display_name: display.trim() || business.trim(),
+            bio: bio.trim() || null,
+            business_address: null,
+            offers_mobile: false,
+            open_days: openDays.map((day) => DAY_NUMBERS[day as (typeof DAYS)[number]]),
+            // TODO(api): the web wizard doesn't ask for a country yet; Sheree
+            // only operates in Ghana, which the old RPC also defaulted to.
+            country_code: "GH",
+            instagram_url: instagram.trim()
               ? `https://instagram.com/${instagram.trim().replace(/^@/, "")}`
               : null,
-          });
-
-    if (rpcError) {
+            tiktok_url: tiktok.trim()
+              ? `https://www.tiktok.com/@${tiktok.trim().replace(/^@/, "")}`
+              : null,
+            phone: trimmedPhone || null,
+            location: null,
+            schedule: null,
+          },
+        });
+      }
+    } catch (cause) {
+      const message = userMessage(cause, "Your setup couldn’t be saved. Please try again.");
       setSaving(false);
-      setError(rpcError.message);
-      showError("Setup could not be saved", rpcError.message);
+      setError(message);
+      showError("Setup could not be saved", message);
       return;
     }
 

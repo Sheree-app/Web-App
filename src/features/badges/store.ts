@@ -1,12 +1,12 @@
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
 
 /**
  * Founding Beautician badge store, ported from the mobile `badges/store`.
  *
- * Founding status is server-authoritative — `professional_profiles
- * .is_founding_beautician` is the fast boolean every surface reads, and
- * `get_founding_badges` is the richer lookup used when only an id is known.
- * Nothing here computes eligibility.
+ * Founding status is server-authoritative — feed, profile and explore payloads
+ * carry the fast `founding` boolean, and `GET /v1/professionals/badges` is the
+ * richer lookup used when only an id is known. Nothing here computes
+ * eligibility.
  *
  * The store:
  *  - accepts profile ids and deduplicates them,
@@ -14,7 +14,7 @@ import { supabase } from "@/lib/supabase/client";
  *  - caches results for five minutes,
  *  - shares one request between concurrent callers,
  *  - notifies subscribers as results arrive,
- *  - fails open (no badge) when the RPC fails, without caching the failure so a
+ *  - fails open (no badge) when the lookup fails, without caching the failure so a
  *    later attempt can still succeed.
  */
 
@@ -30,13 +30,24 @@ type CacheEntry<T> = { value: T; expiresAt: number };
 
 type Waiter = { resolve: (value: FoundingBadgeData | null) => void };
 
+/** `GET /v1/professionals/badges` (`sheree-backend/docs/api/profiles.md`). */
 type FoundingBadgeRow = {
   professional_id: string;
+  user_id: string;
   is_founding: boolean | null;
   founding_position: number | null;
   founding_categories: string[] | null;
   awarded_at: string | null;
+  is_official: boolean;
 };
+
+/** Ids with no professional profile are simply left out of the answer. */
+function fetchBadgeRows(by: { ids: string[] } | { user_ids: string[] }) {
+  return api.get<FoundingBadgeRow[]>("/v1/professionals/badges", {
+    auth: "optional",
+    query: "ids" in by ? { ids: by.ids.join(",") } : { user_ids: by.user_ids.join(",") },
+  });
+}
 
 export const FOUNDING_CACHE_TTL_MS = 5 * 60 * 1000;
 export const FOUNDING_BATCH_SIZE = 100;
@@ -86,19 +97,14 @@ function mapRow(row: FoundingBadgeRow): FoundingBadgeData {
   };
 }
 
-/** Calls the RPC for one chunk and resolves every waiter in it. */
+/** Looks up one chunk and resolves every waiter in it. */
 async function fetchChunk(ids: string[]) {
   const waiters = ids.map((id) => ({ id, list: queue.get(id) ?? [] }));
   for (const id of ids) queue.delete(id);
 
   let rows: FoundingBadgeRow[] = [];
   try {
-    const { data, error } = await supabase.rpc(
-      "get_founding_badges" as never,
-      { profile_ids: ids } as never,
-    );
-    if (error) throw error;
-    rows = (data ?? []) as FoundingBadgeRow[];
+    rows = await fetchBadgeRows({ ids });
   } catch {
     // Fail open: show no badge, and do not cache the failure so the next
     // attempt can retry once the network recovers.
@@ -186,7 +192,10 @@ export async function requestFoundingBadges(
   return new Map(unique.map((id, index) => [id, results[index]]));
 }
 
-/** Looks a professional profile up by Sheree user id, cached for five minutes. */
+/**
+ * Looks a professional up by Sheree user id: one request answers both the
+ * profile id and the badge. Cached for five minutes; concurrent callers share it.
+ */
 async function profileIdForUser(userId: string): Promise<string | null> {
   const cached = readEntry(userProfileCache, userId);
   if (cached !== undefined) return cached;
@@ -196,13 +205,9 @@ async function profileIdForUser(userId: string): Promise<string | null> {
 
   const request = (async () => {
     try {
-      const { data, error } = await supabase
-        .from("professional_profiles")
-        .select("id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (error) throw error;
-      return writeEntry(userProfileCache, userId, data?.id ?? null);
+      const [row] = (await fetchBadgeRows({ user_ids: [userId] })).filter((item) => item?.user_id === userId);
+      if (row?.professional_id) writeEntry(badgeCache, row.professional_id, mapRow(row));
+      return writeEntry(userProfileCache, userId, row?.professional_id ?? null);
     } catch {
       // Fail open without poisoning the cache.
       return null;

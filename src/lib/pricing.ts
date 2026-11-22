@@ -27,34 +27,34 @@ export function bookingDueNow(b: {
 export function feeLabel(c: FeeConfig, capped: boolean) {
     return `Sheree service fee (${Number((c.service_fee_rate * 100).toFixed(4))}%${capped ? `, capped at ${formatMoney(c.service_fee_cap, c.currency)}` : ""})`;
 }
+// Codes from the API client (`src/lib/api/errors.ts`), duck-typed so this file
+// stays importable by the plain-node pricing tests.
+const EXPECTED_FALLBACK_CODES = new Set(["network_error", "timeout", "api_not_configured"]);
 function isExpectedFeeConfigFallback(error: unknown) {
     const candidate = error as { code?: unknown; message?: unknown } | null;
     const code = String(candidate?.code ?? "");
-    const message = `${String(candidate?.message ?? "")} ${String((candidate as { details?: unknown })?.details ?? "")}`;
-    return code === "PGRST202" || code === "42883" ||
-        /get_service_fee_config.*(not found|does not exist|schema cache)/i.test(message) ||
+    const message = String(candidate?.message ?? "");
+    return EXPECTED_FALLBACK_CODES.has(code) ||
         /failed to fetch|network error|network request failed|fetch failed/i.test(message);
 }
-export async function fetchFeeConfig(client: {
-    rpc: (name: never) => PromiseLike<{
-        data: unknown;
-        error: unknown;
-    }>;
-}): Promise<FeeConfig> {
+/**
+ * Loads and validates the fee config. `load` returns the body of
+ * `GET /v1/service-fee` (`sheree-backend/docs/api/bookings.md`); the caller
+ * picks the auth mode (the server has no session).
+ */
+export async function fetchFeeConfig(load: () => Promise<unknown>): Promise<FeeConfig> {
     try {
-        const { data, error } = await client.rpc("get_service_fee_config" as never);
-        if (error)
-            throw error;
-        const row = (Array.isArray(data) ? data[0] : data) as FeeConfig;
+        const data = await load();
+        const row = (Array.isArray(data) ? data[0] : data) as FeeConfig | null | undefined;
         if (!row || !Number.isFinite(Number(row.service_fee_rate)) || Number(row.service_fee_rate) < 0 || !Number.isFinite(Number(row.service_fee_cap)) || Number(row.service_fee_cap) < 0 || !row.currency)
             throw new Error("Invalid fee configuration");
         new Intl.NumberFormat("en", { style: "currency", currency: row.currency });
         return { service_fee_rate: Number(row.service_fee_rate), service_fee_cap: Number(row.service_fee_cap), currency: row.currency };
     }
     catch (error) {
-        // During rollout the RPC may not exist in a project's schema cache yet.
-        // The fallback is the policy of record, so don't turn that expected
-        // migration gap into a server console error on every page render.
+        // Offline, or no API configured in this deployment: the fallback is the
+        // policy of record, so don't turn that into a server console error on
+        // every page render.
         if (!isExpectedFeeConfigFallback(error))
             console.error("Service fee config unavailable; using emergency fallback", error);
         return FALLBACK_FEE_CONFIG;

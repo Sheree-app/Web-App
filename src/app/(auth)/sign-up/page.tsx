@@ -2,13 +2,17 @@
 
 import { AuthFooterPrompt, AuthLayout } from "@/components/shell/auth-layout";
 import { Button, FormError, Input, PasswordInput } from "@/components/ui";
-import { supabase } from "@/lib/supabase/client";
+import { isVerificationPending, signUp } from "@/features/auth/api";
+import { mapAuthError } from "@/features/auth/auth-errors";
+import { holdVerification } from "@/features/auth/pending-verification";
+import { useAuth } from "@/providers/auth-provider";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function SignUpPage() {
   const router = useRouter();
+  const { startSession } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,33 +38,24 @@ export default function SignUpPage() {
     }
 
     setLoading(true);
-    const { data, error: authError } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password,
-      options: {
-        // `requires_onboarding` is what routes the new account into the flow
-        // after it confirms its email.
-        data: { username: name.trim(), requires_onboarding: true },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+    let result: Awaited<ReturnType<typeof signUp>>;
+    try {
+      result = await signUp(normalizedEmail, password, name.trim());
+    } catch (signUpError) {
+      setLoading(false);
+      setError(mapAuthError(signUpError, "sign-up").message);
+      return;
+    }
+
+    if (!isVerificationPending(result)) {
+      // Verification skipped by the identity provider: already signed in.
+      await startSession(result, normalizedEmail);
+      window.location.replace("/onboarding");
+      return;
+    }
+
+    holdVerification(normalizedEmail, result.pending_authentication_token, password);
     setLoading(false);
-
-    if (authError) {
-      setError(authError.message);
-      return;
-    }
-
-    if (data.session) {
-      // Confirm-email is switched off in this project; signing in silently here
-      // would skip verification, so surface the misconfiguration instead.
-      await supabase.auth.signOut();
-      setError(
-        "Email verification is not enabled yet. Turn on Confirm email in Supabase, then try again.",
-      );
-      return;
-    }
-
     router.push(`/verify-email?email=${encodeURIComponent(normalizedEmail)}`);
   };
 

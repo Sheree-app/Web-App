@@ -1,7 +1,8 @@
 "use client";
 
 import { Button, ButtonLink, Card, FormError } from "@/components/ui";
-import { db } from "@/lib/supabase/untyped";
+import { setWantsProfessionalAccount } from "@/features/account/api";
+import { userMessage } from "@/lib/errors";
 import { useAuth } from "@/providers/auth-provider";
 import { Sparkles } from "lucide-react";
 import { useState } from "react";
@@ -21,12 +22,13 @@ export default function BecomeProfessionalPage() {
   const startSetup = async () => {
     setSaving(true);
     setError("");
-    // Best-effort: the RPC only exists once the migration has been applied.
-    const { error: rpcError } = await db.rpc("set_my_professional_intent", { value: true });
-    setSaving(false);
-    if (rpcError) {
-      setError(rpcError.message);
+    try {
+      await setWantsProfessionalAccount(true);
+    } catch (cause) {
+      setError(userMessage(cause, "We couldn’t start your professional setup. Please try again."));
       return;
+    } finally {
+      setSaving(false);
     }
     await refreshProfile();
   };

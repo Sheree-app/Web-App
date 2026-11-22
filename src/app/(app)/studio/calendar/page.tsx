@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "@/lib/errors";
 import { ConfirmDialog, Sheet, Skeleton, Spinner } from "@/components/ui";
 import {
   fetchBookingRequests,
@@ -159,7 +160,7 @@ export default function StudioCalendarPage() {
               : "The customer has been notified.",
       });
     } catch (cause) {
-      showError("Request unchanged", cause instanceof Error ? cause.message : "Try again.");
+      showError("Request unchanged", userMessage(cause, "Try again."));
     } finally {
       setRequestBusy("");
     }
@@ -175,7 +176,7 @@ export default function StudioCalendarPage() {
     } catch (cause) {
       showError(
         "Schedule could not be saved",
-        cause instanceof Error ? cause.message : "Try again.",
+        userMessage(cause, "Try again."),
       );
     } finally {
       setSaving(false);
@@ -204,7 +205,7 @@ export default function StudioCalendarPage() {
     } catch (cause) {
       showError(
         "Appointment unchanged",
-        cause instanceof Error ? cause.message : "Try again.",
+        userMessage(cause, "Try again."),
       );
     } finally {
       setAppointmentBusy("");

@@ -1,6 +1,7 @@
 "use client";
 
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
+import { errorCode, userMessage } from "@/lib/errors";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft, Check, Wrench } from "lucide-react";
@@ -37,13 +38,17 @@ export default function ReportProblemPage() {
     }
     setSubmitting(true);
     try {
-      const { error } = await supabase.functions.invoke("report-problem", {
+      await api.post("/v1/support/reports", {
         body: { category, details, steps, appMode, platform: "web" },
       });
-      if (error) throw new Error(error.message || "Your report could not be submitted.");
       setSubmitted(true);
     } catch (cause) {
-      showError("Report not sent", cause instanceof Error ? cause.message : "Please try again.");
+      showError(
+        "Report not sent",
+        errorCode(cause) === "rate_limited"
+          ? "You've sent several reports in a short time. Please try again later."
+          : userMessage(cause, "We couldn't send your report. Please try again.", "report-problem.send"),
+      );
     } finally {
       setSubmitting(false);
     }

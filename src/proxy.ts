@@ -1,17 +1,19 @@
 import { FEED_SEED_COOKIE, newFeedSeed } from "@/features/feed/rows";
-import { env, isSupabaseConfigured } from "@/lib/env";
-import { createServerClient } from "@supabase/ssr";
+import { SIGNED_IN_COOKIE } from "@/lib/api/browser-token-store";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * Next.js 16 renamed Middleware to Proxy; the behaviour is unchanged.
  *
  * Responsibilities:
- *  1. Refresh the Supabase session cookie on every navigation so a long-lived
- *     tab doesn't get signed out mid-session.
- *  2. Optimistic route guards — signed-out people are sent to sign-in, signed-in
+ *  1. Optimistic route guards — signed-out people are sent to sign-in, signed-in
  *     people are kept out of the auth screens. The mobile app did this with
  *     `Stack.Protected` guards; here the same rules live in one place.
+ *
+ * The login itself lives in the browser (`src/lib/api`), so the proxy only sees
+ * a hint cookie the API client keeps in step with it, plus the old Supabase
+ * auth cookie: someone still holding that is let through so `AuthProvider` can
+ * move their login to the API without asking them to sign in again.
  *
  * It deliberately does not fetch profile rows — role and onboarding state are
  * resolved by `AuthProvider` on the client, which is where the redirects that
@@ -24,6 +26,7 @@ const PROTECTED_PREFIXES = [
   "/bookmarks",
   "/notifications",
   "/settings",
+  "/change-password",
   "/personal-details",
   "/location",
   "/reviews",
@@ -66,43 +69,14 @@ export async function proxy(request: NextRequest) {
     return res;
   };
 
-  let response = NextResponse.next({ request });
-
-  if (!isSupabaseConfigured) return withSeed(response);
-
-  const supabase = createServerClient(
-    env.supabaseUrl,
-    env.supabaseAnonKey,
-    {
-      cookies: {
-        getAll: () => request.cookies.getAll(),
-        setAll: (cookiesToSet, headers) => {
-          for (const { name, value } of cookiesToSet) {
-            request.cookies.set(name, value);
-          }
-          response = NextResponse.next({ request });
-          for (const { name, value, options } of cookiesToSet) {
-            response.cookies.set(name, value, options);
-          }
-          // Auth responses must never be cached by a CDN or proxy.
-          for (const [key, value] of Object.entries(headers ?? {})) {
-            response.headers.set(key, value);
-          }
-        },
-      },
-    },
-  );
-
-  // Must run before the response is committed so refreshed cookies can be written.
-  //
-  // `getClaims()` rather than `getUser()`: the project signs access tokens with
-  // an asymmetric key (ES256), so the token is verified locally against the
-  // cached JWKS instead of a round trip to Supabase Auth on every request. It
-  // still refreshes an expired session (and writes the cookies) first, and on a
-  // project with a symmetric key it falls back to `getUser()` by itself. These
-  // guards are optimistic either way; data access is enforced by RLS.
-  const { data } = await supabase.auth.getClaims();
-  const user = data?.claims?.sub ? data.claims : null;
+  const response = NextResponse.next({ request });
+  const apiLogin = request.cookies.get(SIGNED_IN_COOKIE)?.value === "1";
+  // A legacy cookie only opens protected pages (where the move happens). It
+  // never bounces anyone off /sign-in: if the move fails, signing in must work.
+  const legacyLogin = request.cookies
+    .getAll()
+    .some(({ name }) => /^sb-.+-auth-token(\.\d+)?$/.test(name));
+  const user = apiLogin || legacyLogin;
 
   const pathname = request.nextUrl.pathname;
 
@@ -113,7 +87,7 @@ export async function proxy(request: NextRequest) {
     return withSeed(NextResponse.redirect(url));
   }
 
-  if (user && AUTH_ROUTES.includes(pathname)) {
+  if (apiLogin && AUTH_ROUTES.includes(pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = "/home";
     url.search = "";

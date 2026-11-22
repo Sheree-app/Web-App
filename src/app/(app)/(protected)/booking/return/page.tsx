@@ -3,6 +3,7 @@
 import { ButtonLink, Spinner, SuccessScreen } from "@/components/ui";
 import { AppPromoStrip } from "@/features/app-promo/AppPromo";
 import { verifyDeposit, releaseUnpaidBooking } from "@/features/booking/api";
+import { userMessage } from "@/lib/errors";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -10,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
  * Where Paystack sends the customer back.
  *
  * Paystack appends `reference`, and we pass `bookingId` through the callback URL.
- * Verification happens server-side (the Edge Function talks to Paystack), so this
+ * Verification happens server-side (the API talks to Paystack), so this
  * page never trusts the query string for anything but identifiers.
  */
 export default function BookingReturnPage() {
@@ -43,10 +44,15 @@ export default function BookingReturnPage() {
         setState("failed");
         setMessage("That payment didn’t complete, so the slot was released. Nothing was charged.");
       })
-      .catch(() => {
+      .catch((cause: unknown) => {
         setState("failed");
+        // Refunds and mismatches come back with their own copy (late_payment_refunded, ...).
         setMessage(
-          "We couldn’t confirm the payment just now. Check your bookings in a moment — the slot is held briefly.",
+          userMessage(
+            cause,
+            "We couldn’t confirm the payment just now. Check your bookings in a moment — the slot is held briefly.",
+            "booking.verify",
+          ),
         );
       });
   }, [bookingId, reference]);

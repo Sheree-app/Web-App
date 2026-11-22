@@ -1,4 +1,5 @@
 "use client";
+import { userMessage } from "@/lib/errors";
 import { usePricing } from "@/providers/pricing-provider";
 
 import {
@@ -50,7 +51,7 @@ export default function PayoutsPage() {
       })
       .catch((cause: unknown) => {
         if (active) {
-          setError(cause instanceof Error ? cause.message : "We couldn’t load your payouts.");
+          setError(userMessage(cause, "We couldn’t load your payouts."));
         }
       })
       .finally(() => {

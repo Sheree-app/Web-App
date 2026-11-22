@@ -6,7 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { createMessagingTokenFetcher } from "@/features/messaging/token-fetcher";
 import { usePresenceHeartbeat } from "@/features/messaging/use-presence";
 import { env } from "@/lib/env";
-import { supabase } from "@/lib/supabase";
+import { api as sheree } from "@/lib/api";
 import { useAuth } from "./auth-provider";
 
 const client = env.convexUrl ? new ConvexReactClient(env.convexUrl) : null;
@@ -14,18 +14,29 @@ type MessagingState = { status: "disabled" | "loading" | "signedOut" | "ready" |
 const Context = createContext<MessagingState>({ status: "disabled", retry: () => {} });
 export const useMessaging = () => useContext(Context);
 
-function useSupabaseAuth() {
+/**
+ * Convex signs in with a token from `POST /v1/auth/convex-token`.
+ * TODO(convex): the deployment's `convex/auth.config.ts` still trusts only
+ * Supabase tokens; messaging stays signed out until our JWKS provider
+ * (issuer = API, audience `convex`) is added there.
+ */
+const convexTokens = {
+  currentUserId: () => sheree.session.user()?.id ?? null,
+  issue: () => sheree.post<{ token: string; expires_in: number }>("/v1/auth/convex-token"),
+};
+
+function useApiAuth() {
   const { loading, session } = useAuth();
   const userId = session?.user.id;
   // Convex reauthenticates whenever this function changes. Token rotation must
   // not change its identity, or refresh -> render -> reauthenticate loops forever.
-  const fetchAccessToken = useMemo(() => createMessagingTokenFetcher(supabase.auth, userId), [userId]);
+  const fetchAccessToken = useMemo(() => createMessagingTokenFetcher(convexTokens, userId), [userId]);
   return useMemo(() => ({ isLoading: loading, isAuthenticated: Boolean(userId), fetchAccessToken }), [loading, userId, fetchAccessToken]);
 }
 
 export function MessagingProvider({ children }: { children: ReactNode }) {
   if (!client) return <Context.Provider value={{ status: "disabled", retry: () => {} }}>{children}</Context.Provider>;
-  return <ConvexProviderWithAuth client={client} useAuth={useSupabaseAuth}><MessagingIdentity>{children}</MessagingIdentity></ConvexProviderWithAuth>;
+  return <ConvexProviderWithAuth client={client} useAuth={useApiAuth}><MessagingIdentity>{children}</MessagingIdentity></ConvexProviderWithAuth>;
 }
 
 function MessagingIdentity({ children }: { children: ReactNode }) {
@@ -47,7 +58,7 @@ function MessagingIdentity({ children }: { children: ReactNode }) {
   const retry = useCallback(() => {
     if (!isAuthenticated) {
       // Reconnect on this explicit action, rather than independently rotating
-      // Supabase tokens behind Convex's stable authentication callback.
+      // tokens behind Convex's stable authentication callback.
       window.location.reload();
       return;
     }

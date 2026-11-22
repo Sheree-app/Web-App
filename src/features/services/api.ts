@@ -1,52 +1,102 @@
-import { supabase } from '@/lib/supabase';
-import { resolveProfileId } from '@/features/profile/api';
-import { DEPOSIT_PERCENT, demoServices, type Service } from './data';
+import { api } from '@/lib/api';
+import { AppError, errorCode } from '@/lib/errors';
+import { deleteMedia, mediaAssetFromFile, uploadMedia } from '@/lib/media';
+import { demoServices, type Service } from './data';
 
+/**
+ * Services through the Sheree API (`sheree-backend/docs/api/profiles.md`,
+ * `pro-services.md`). Photos go through the media pipeline (R2, resized WebP)
+ * and are attached by upload id.
+ */
 export type ServiceCategory={id:string;name:string};
 
+// Service cards always show a picture; one without a photo gets the demo image.
 const fallbackImage=demoServices[0].image;
-function publicUrl(path?:string|null){return path?supabase.storage.from('profile-media').getPublicUrl(path).data.publicUrl:fallbackImage}
 
-export async function fetchProfessionalServices(profileId:string):Promise<Service[]>{
- const resolvedId=await resolveProfileId(profileId);
- const{data,error}=await supabase.rpc('get_professional_services',{profile_id:resolvedId});
- if(error)throw error;
- return (data??[]).map((row,index)=>({id:row.id,name:row.name,category:row.category??'Service',price:Number(row.price),durationMinutes:row.duration_minutes,description:row.description,image:publicUrl(row.photos?.[0]?.storage_path),active:true,popular:index===0}));
-}
-export async function fetchProfessionalName(profileId:string):Promise<string>{
- const resolvedId=await resolveProfileId(profileId);
- const{data,error}=await supabase.from('professional_profiles').select('display_name,business_name').eq('id',resolvedId).single();
- if(error)throw error;
- return data.display_name?.trim()||data.business_name.trim();
+type PublicProfileRow={id:string;handle:string|null;name:string|null;business_name:string|null};
+const fetchPublicProfile=(profileKey:string)=>
+ api.get<PublicProfileRow>(`/v1/professionals/${encodeURIComponent(profileKey.trim())}`,{auth:'optional'});
+
+type PublicServiceRow={id:string;name:string;description:string|null;price:number;duration_minutes:number;deposit_percentage:number|null;category:string;image_url:string|null};
+// `profileKey` is a public handle when opened from a share link, or a UUID
+// during in-app navigation; the API resolves both and returns photo URLs.
+export async function fetchProfessionalServices(profileKey:string):Promise<Service[]>{
+ const rows=await api.get<PublicServiceRow[]>(`/v1/professionals/${encodeURIComponent(profileKey.trim())}/services`,{auth:'optional'});
+ return rows.map((row,index)=>({id:row.id,name:row.name,category:row.category??'Service',price:Number(row.price),durationMinutes:row.duration_minutes,description:row.description??'',image:row.image_url??fallbackImage,active:true,popular:index===0}));
 }
 
-export async function fetchProfessionalHandle(profileId:string):Promise<string>{
- const resolvedId=await resolveProfileId(profileId);
- const{data,error}=await (supabase.from('professional_profiles' as never) as any).select('id,handle').eq('id',resolvedId).single();
- if(error)throw error;
- return data.handle||data.id;
+export async function fetchProfessionalName(profileKey:string):Promise<string>{
+ const profile=await fetchPublicProfile(profileKey);
+ // `name` is the display name, else the business name.
+ return profile.name?.trim()||profile.business_name?.trim()||'Professional';
 }
 
-export async function fetchOwnServices():Promise<{profileId:string;countryCode:string;services:Service[]}>{
- const{data:{user}}=await supabase.auth.getUser();if(!user)throw new Error('Sign in to manage services.');
- const{data:profile,error:profileError}=await supabase.from('professional_profiles').select('id,country_code').eq('user_id',user.id).single();if(profileError)throw profileError;
- const[{data,error},{data:categories,error:categoryError}]=await Promise.all([supabase.from('professional_services').select('id,interest_id,name,description,price,duration_minutes,deposit_percentage,is_active').eq('professional_id',profile.id).order('sort_order'),supabase.from('interests').select('id,name').eq('is_active',true).order('sort_order')]);if(error)throw error;if(categoryError)throw categoryError;
- const ids=(data??[]).map(row=>row.id);const{data:photos}=ids.length?await supabase.from('service_photos').select('service_id,storage_path').in('service_id',ids):{data:[]};
- return{profileId:profile.id,countryCode:profile.country_code??'GH',services:(data??[]).map((row,index)=>({id:row.id,name:row.name,categoryId:row.interest_id??undefined,category:categories?.find(category=>category.id===row.interest_id)?.name??'Uncategorised',price:Number(row.price),durationMinutes:row.duration_minutes,description:row.description,image:publicUrl(photos?.find(photo=>photo.service_id===row.id)?.storage_path),active:row.is_active,popular:index===0}))};
+export async function fetchProfessionalHandle(profileKey:string):Promise<string>{
+ const profile=await fetchPublicProfile(profileKey);
+ return profile.handle||profile.id;
 }
 
-export async function fetchServiceCategories():Promise<ServiceCategory[]>{const{data,error}=await supabase.from('interests').select('id,name').eq('is_active',true).order('sort_order');if(error)throw error;return data??[];}
+type OwnServiceRow={id:string;interest_id:string|null;category:string;name:string;description:string|null;price:number;duration_minutes:number;deposit_percentage:number;is_active:boolean;sort_order:number;image:string|null};
+type PracticeCategoryRow={id:string;name:string;is_primary:boolean};
+const toOwnService=(row:OwnServiceRow,index:number):Service=>({id:row.id,name:row.name,categoryId:row.interest_id??undefined,category:row.category??'Uncategorised',price:Number(row.price),durationMinutes:row.duration_minutes,description:row.description??'',image:row.image??fallbackImage,active:row.is_active,popular:index===0});
 
-export async function saveProfessionalService(profileId:string,service:Service){
- if(!service.categoryId)throw new Error('Choose a category for this service.');
- const values={interest_id:service.categoryId,name:service.name,description:service.description,price:service.price,duration_minutes:service.durationMinutes,deposit_percentage:DEPOSIT_PERCENT,is_active:service.active};
- const query=service.id.startsWith('local-')?supabase.from('professional_services').insert({...values,professional_id:profileId}):supabase.from('professional_services').update(values).eq('id',service.id);
- const{data,error}=await query.select('id').single();if(error)throw error;return data.id;
+export async function fetchOwnServices():Promise<{profileId:string;countryCode:string;services:Service[];categories:ServiceCategory[]}>{
+ const data=await api.get<{profile_id:string;country_code:string;categories:PracticeCategoryRow[];services:OwnServiceRow[]}>('/v1/me/services');
+ return{profileId:data.profile_id,countryCode:data.country_code??'GH',categories:data.categories.map(({id,name})=>({id,name})),services:data.services.map(toOwnService)};
 }
 
-export async function uploadServicePhoto(serviceId:string,uri:string,name:string){
- const{data:{user}}=await supabase.auth.getUser();if(!user)throw new Error('Sign in to upload photos.');
- const response=await fetch(uri);const file=await response.arrayBuffer();const extension=(name.split('.').pop()||'jpg').toLowerCase();const path=`${user.id}/services/${serviceId}/${Date.now()}.${extension}`;const contentType=extension==='png'?'image/png':extension==='webp'?'image/webp':'image/jpeg';
- const{error:uploadError}=await supabase.storage.from('profile-media').upload(path,file,{contentType,upsert:false});if(uploadError)throw uploadError;
- const{error}=await supabase.from('service_photos').insert({service_id:serviceId,storage_path:path,alt_text:'Service result'});if(error)throw error;return publicUrl(path);
+/** Every active category; picking one outside the practice adds it on save. */
+export async function fetchServiceCategories():Promise<ServiceCategory[]>{
+ return(await api.get<Array<{id:string;name:string}>>('/v1/categories',{auth:'optional'})).map(({id,name})=>({id,name}));
+}
+
+/** Only the categories in the professional's practice, primary first. */
+export async function fetchProfessionalCategories():Promise<ServiceCategory[]>{
+ return(await api.get<PracticeCategoryRow[]>('/v1/me/categories')).map(({id,name})=>({id,name}));
+}
+
+/** Adds a category to the professional's practice (idempotent). */
+export async function addProfessionalCategory(interestId:string):Promise<void>{
+ await api.put(`/v1/me/categories/${encodeURIComponent(interestId)}`);
+}
+
+/**
+ * Creates (`local-…` ids) or updates a service and returns its id. The server
+ * sets the platform deposit; in Ghana without a payout account it refuses with
+ * a message written for the user.
+ */
+export async function saveProfessionalService(_profileId:string,service:Service):Promise<string>{
+ if(!service.categoryId)throw new AppError('Choose a category for this service.','validation');
+ const values={interest_id:service.categoryId,name:service.name.trim(),description:service.description.trim(),price:service.price,duration_minutes:service.durationMinutes,is_active:service.active};
+ const save=()=>service.id.startsWith('local-')
+  ?api.post<OwnServiceRow>('/v1/me/services',{body:values})
+  :api.patch<OwnServiceRow>(`/v1/me/services/${encodeURIComponent(service.id)}`,{body:values});
+ try{
+  return(await save()).id;
+ }catch(error){
+  // The web editor offers every category (as before the API); the server only
+  // accepts the practice's, so add the chosen one and try once more.
+  if(errorCode(error)==='category_not_in_practice'){
+   await addProfessionalCategory(service.categoryId);
+   return(await save()).id;
+  }
+  throw error;
+ }
+}
+
+/**
+ * Uploads a service photo through the media pipeline and sets it on the
+ * service. The server replaces and deletes any older photo. Returns its URL.
+ */
+export async function uploadServicePhoto(serviceId:string,uri:string,name:string):Promise<string>{
+ const blob=await fetch(uri).then(response=>response.blob());
+ const asset=await mediaAssetFromFile(new File([blob],name,{type:blob.type}));
+ const media=await uploadMedia('service',asset);
+ try{
+  const saved=await api.put<OwnServiceRow>(`/v1/me/services/${encodeURIComponent(serviceId)}/photo`,{body:{media_id:media.mediaId}});
+  return saved.image??fallbackImage;
+ }catch(error){
+  await deleteMedia(media).catch(()=>undefined);
+  throw error;
+ }
 }

@@ -1,5 +1,5 @@
-import { supabase } from "@/lib/supabase";
-import { fetchOwnProfessionalId } from "./api";
+import { api } from "@/lib/api";
+import { reportError } from "@/lib/errors";
 import {
     fetchPayoutAccount,
     type PayoutAccount,
@@ -14,6 +14,12 @@ export type PayoutStatus =
   | "failed"
   | "reversed";
 export type PayoutType = "completion" | "customer_cancellation";
+/**
+ * Which Sheree fee model the payout was booked under: `legacy` kept 10% of the
+ * deposit; `customer_paid_fee` means the customer paid the fee on top and the
+ * professional received the whole deposit.
+ */
+export type PayoutFeeModel = "legacy" | "customer_paid_fee";
 export type Payout = {
   id: string;
   bookingReference: string | null;
@@ -24,6 +30,7 @@ export type Payout = {
   platformFee: number | null;
   servicePrice: number | null;
   payoutType: PayoutType;
+  feeModel: PayoutFeeModel;
   createdAt: string;
   paidAt: string | null;
   failureReason: string | null;
@@ -42,71 +49,72 @@ export type PayoutsData = {
   items: Payout[];
   account: PayoutAccount | null;
 };
+/** `GET /v1/me/payouts` (`sheree-backend/docs/api/payments.md`). */
 type RawPayout = {
   id: string;
   booking_id: string | null;
-  amount: number | string;
+  amount: number;
   status: PayoutStatus;
   payout_type: PayoutType;
-  deposit_amount: number | string | null;
-  platform_fee: number | string | null;
-  service_price: number | string | null;
+  deposit_amount: number | null;
+  platform_fee: number | null;
+  service_price: number | null;
+  fee_model: PayoutFeeModel | null;
   created_at: string;
   paid_at: string | null;
   failure_reason: string | null;
-  bookings: { booking_reference: string; service_name: string } | null;
+  booking_reference: string | null;
+  service_name: string | null;
+};
+type RawSummary = {
+  expected: number;
+  received: number;
+  attention: number;
+  expected_count: number;
+  received_count: number;
+  attention_count: number;
+  count: number;
 };
 const numberOrNull = (value: number | string | null | undefined) =>
   value === null || value === undefined ? null : Number(value);
 
-// Professionals may read their own payouts via RLS; the account details come
-// from the payout-account edge function (the table itself is server-only).
-export async function fetchPayouts(userId: string): Promise<PayoutsData> {
-  const professionalId = await fetchOwnProfessionalId(userId);
-  const [payoutResult, account] = await Promise.all([
-    supabase
-      .from("payouts" as never)
-      .select(
-        "id, booking_id, amount, status, payout_type, deposit_amount, platform_fee, service_price, created_at, paid_at, failure_reason, bookings(booking_reference, service_name)",
-      )
-      .eq("professional_id", professionalId)
-      .order("created_at", { ascending: false }),
-    fetchPayoutAccount().catch(() => null),
+// The API totals expected / received / needs-attention payouts itself; the
+// account summary comes from the payout-account route and may fail on its own.
+// `_userId` is kept for callers: the API reads the signed-in professional.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function fetchPayouts(_userId?: string): Promise<PayoutsData> {
+  const [data, account] = await Promise.all([
+    api.get<{ summary: RawSummary; items: RawPayout[] }>("/v1/me/payouts"),
+    fetchPayoutAccount().catch((error) => {
+      reportError(error, "payouts.account");
+      return null;
+    }),
   ]);
-  if (payoutResult.error) throw payoutResult.error;
-  const rows = (payoutResult.data ?? []) as unknown as RawPayout[];
-  const items: Payout[] = rows.map((row) => ({
+  const items: Payout[] = data.items.map((row) => ({
     id: row.id,
-    bookingReference: row.bookings?.booking_reference ?? null,
-    serviceName: row.bookings?.service_name ?? null,
+    bookingReference: row.booking_reference ?? null,
+    serviceName: row.service_name ?? null,
     status: row.status,
     amount: Number(row.amount),
     depositAmount: numberOrNull(row.deposit_amount),
     platformFee: numberOrNull(row.platform_fee),
     servicePrice: numberOrNull(row.service_price),
     payoutType: row.payout_type,
+    feeModel: row.fee_model ?? "legacy",
     createdAt: row.created_at,
     paidAt: row.paid_at,
     failureReason: row.failure_reason,
   }));
-  const sum = (list: Payout[]) =>
-    list.reduce((total, item) => total + item.amount, 0);
-  const expected = items.filter(
-    (item) => item.status === "pending" || item.status === "processing",
-  );
-  const received = items.filter((item) => item.status === "paid");
-  const attention = items.filter(
-    (item) => item.status === "failed" || item.status === "reversed",
-  );
+  const s = data.summary;
   return {
     summary: {
-      expected: sum(expected),
-      received: sum(received),
-      attention: sum(attention),
-      expectedCount: expected.length,
-      receivedCount: received.length,
-      attentionCount: attention.length,
-      count: items.length,
+      expected: Number(s.expected),
+      received: Number(s.received),
+      attention: Number(s.attention),
+      expectedCount: s.expected_count,
+      receivedCount: s.received_count,
+      attentionCount: s.attention_count,
+      count: s.count,
     },
     items,
     account,

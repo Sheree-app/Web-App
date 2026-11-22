@@ -1,7 +1,8 @@
 "use client";
 
-import { supabase } from "@/lib/supabase/client";
 import { updateAccountProfile } from "@/features/account/api";
+import { fetchAccount } from "@/features/auth/api";
+import { userMessage } from "@/lib/errors";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft } from "lucide-react";
@@ -24,15 +25,12 @@ export default function PersonalDetailsPage() {
 
   useEffect(() => {
     if (!user) return;
-    void supabase
-      .from("users")
-      .select("username,phone")
-      .eq("id", user.id)
-      .single()
-      .then(({ data }) => {
-        setName(data?.username ?? "");
-        setPhone(data?.phone ?? "");
-      });
+    void fetchAccount()
+      .then((account) => {
+        setName(account.username ?? "");
+        setPhone(account.phone ?? "");
+      })
+      .catch(() => undefined);
   }, [user]);
 
   const save = async () => {
@@ -43,16 +41,12 @@ export default function PersonalDetailsPage() {
     }
     setSaving(true);
     try {
-      await updateAccountProfile(user.id, "customer", {
-        username: name,
-        phone,
-        businessName: "",
-        location: "",
-      });
+      // Only the user fields: the business name and location are edited elsewhere.
+      await updateAccountProfile(user.id, "customer", { username: name, phone });
       await refreshProfile();
       router.back();
     } catch (cause) {
-      showError("Details not saved", cause instanceof Error ? cause.message : "Try again.");
+      showError("Details not saved", userMessage(cause, "Try again."));
     } finally {
       setSaving(false);
     }

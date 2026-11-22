@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "@/lib/errors";
 import { Button, ErrorState, FormError, Spinner, SuccessScreen, Textarea, TopBar } from "@/components/ui";
 import {
   BookingAvailabilityError,
@@ -7,6 +8,7 @@ import {
   fetchAvailability,
   fetchBookingForReschedule,
   fetchBookingSlots,
+  fetchCustomBookingSlots,
   rescheduleBooking,
   type AvailabilityDay,
   type BookingSlot,
@@ -51,7 +53,7 @@ export default function ReschedulePage() {
         setNotes(next.notes ?? "");
         const calendar = (await fetchAvailability(
           next.professionalId,
-          next.serviceId,
+          next.serviceId || null,
           todayISO(),
           DAY_COUNT,
         )) as AvailabilityDay[];
@@ -59,7 +61,7 @@ export default function ReschedulePage() {
         setDays(calendar);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : "This booking isn’t available.");
+        if (active) setError(userMessage(cause, "This booking isn’t available."));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -76,7 +78,13 @@ export default function ReschedulePage() {
       setLoadingSlots(true);
       setTime("");
       try {
-        setSlots(await fetchBookingSlots(booking.professionalId, booking.serviceId, nextDate));
+        // A price-card booking has no catalogue service: its slots depend on its length.
+        const minutes = Math.round((+new Date(booking.endsAt) - +new Date(booking.startsAt)) / 60_000);
+        setSlots(
+          booking.serviceId
+            ? await fetchBookingSlots(booking.professionalId, booking.serviceId, nextDate)
+            : await fetchCustomBookingSlots(booking.professionalId, minutes, nextDate),
+        );
       } catch {
         setSlots([]);
       } finally {
@@ -100,7 +108,8 @@ export default function ReschedulePage() {
     try {
       await rescheduleBooking(
         bookingId,
-        new Date(`${date}T${time}:00`).toISOString(),
+        // Slot times are Africa/Accra (UTC year-round), as in the booking flow.
+        new Date(`${date}T${time}:00Z`).toISOString(),
         notes,
         booking.isMobileService,
       );
@@ -111,7 +120,7 @@ export default function ReschedulePage() {
         setError(`${alert.title}. ${alert.message}`);
         void loadSlots(date);
       } else {
-        setError(cause instanceof Error ? cause.message : "That change didn’t go through.");
+        setError(userMessage(cause, "That change didn’t go through."));
       }
     } finally {
       setSaving(false);

@@ -1,32 +1,50 @@
-export type BookingSnapshot = { price: number; deposit_amount: number; balance_amount: number; sheree_fee_amount: number | null; customer_total: number; currency: string };
-import { supabase } from "@/lib/supabase";
-import { FunctionsHttpError } from "@supabase/supabase-js";
+import { api, isApiError, type Page } from "@/lib/api";
+import { AppError, errorCode, withServerMessage } from "@/lib/errors";
+
+/**
+ * Booking and checkout through the Sheree API (`sheree-backend/docs/api/bookings.md`,
+ * `payments.md`). Reservation, rescheduling and payment settlement run the same
+ * SQL and Paystack logic server-side as before. Payment refusals keep their
+ * user-facing messages (`withServerMessage`), so screens can show them as-is
+ * and branch on `errorCode` (`hold_expired`, `payment_received`, ...).
+ */
+const key = (profileKey: string) => encodeURIComponent(profileKey.trim());
+const bookingPath = (bookingId: string) => encodeURIComponent(bookingId);
+
+/** Reservation refusals that mean "that time (or price card) can't be booked". */
+const AVAILABILITY_CODES = new Set([
+  "notice_required",
+  "outside_booking_window",
+  "slot_unavailable",
+  "professional_unavailable",
+  "price_card_booked",
+  "price_card_expired",
+  "price_card_unavailable",
+]);
+
+export type BookingSnapshot = { price: number; deposit_amount: number; balance_amount: number; sheree_fee_amount: number | null; customer_total: number | null; currency: string };
 export type DayState = "available" | "limited" | "full" | "closed";
 export type AvailabilityDay = { date: string; state: DayState };
 export async function fetchAvailability(
   profileId: string,
   /**
-   * `null` is valid for a conversation-only service: the availability RPC
-   * counts existing bookings per day and only uses this to exclude the service
-   * being edited, so a card without a catalogue row can share the same path.
+   * `null` is valid for a conversation-only service: availability counts
+   * bookings per day and ignores the service, so a card without a catalogue
+   * row can share the same path.
    */
   serviceId: string | null,
   fromDate: string,
   dayCount = 35,
-) {
-  const { data, error } = await supabase.rpc("get_booking_availability", {
-    profile_id: profileId,
-    service_id: serviceId,
-    from_date: fromDate,
-    day_count: dayCount,
-  } as never);
-  if (error) throw error;
-  return data ?? [];
+): Promise<AvailabilityDay[]> {
+  return api.get<AvailabilityDay[]>(`/v1/professionals/${key(profileId)}/availability`, {
+    auth: "optional",
+    query: { service_id: serviceId || undefined, from: fromDate, days: Math.min(62, Math.max(1, dayCount)) },
+  });
 }
 export type BookingSlot={time:string;available:boolean;reason:string|null};
 export type BookingFulfilment={offersMobile:boolean;travelFee:number;businessAddress:string|null;countryCode:string;depositRequired:boolean;phone:string|null};
-export async function fetchBookingFulfilment(profileId:string):Promise<BookingFulfilment>{const{data,error}=await supabase.rpc('get_booking_fulfilment' as never,{profile_id:profileId} as never);if(error)throw error;const row=(data??{}) as unknown as{offers_mobile?:boolean;travel_fee?:number|string;business_address?:string|null;country_code?:string;deposit_required?:boolean;phone?:string|null};return{offersMobile:Boolean(row.offers_mobile),travelFee:Number(row.travel_fee??0),businessAddress:row.business_address??null,countryCode:row.country_code??'GH',depositRequired:row.deposit_required!==false,phone:row.phone??null}}
-export async function fetchBookingSlots(profileId:string,serviceId:string,date:string):Promise<BookingSlot[]>{const{data,error}=await supabase.rpc('get_booking_slots' as never,{profile_id:profileId,service_id:serviceId,booking_date:date} as never);if(error)throw error;return((data??[])as unknown as Array<{slot_time:string;is_available:boolean;unavailable_reason:string|null}>).map(row=>({time:row.slot_time,available:row.is_available,reason:row.unavailable_reason}))}
+export async function fetchBookingFulfilment(profileId:string):Promise<BookingFulfilment>{const row=await api.get<{offers_mobile?:boolean;travel_fee?:number|string;business_address?:string|null;country_code?:string;deposit_required?:boolean;phone?:string|null}>(`/v1/professionals/${key(profileId)}/fulfilment`);return{offersMobile:Boolean(row.offers_mobile),travelFee:Number(row.travel_fee??0),businessAddress:row.business_address??null,countryCode:row.country_code??'GH',depositRequired:row.deposit_required!==false,phone:row.phone??null}}
+export async function fetchBookingSlots(profileId:string,serviceId:string,date:string):Promise<BookingSlot[]>{return api.get<BookingSlot[]>(`/v1/professionals/${key(profileId)}/slots`,{auth:'optional',query:{service_id:serviceId,date}})}
 export class BookingAvailabilityError extends Error{constructor(message:string){super(message);this.name='BookingAvailabilityError'}}
 export function bookingAvailabilityAlert(message: string) {
   if (/too close to book/i.test(message)) {
@@ -36,45 +54,86 @@ export function bookingAvailabilityAlert(message: string) {
         "Appointments must be booked at least 1 hour in advance. Please choose a later time.",
     };
   }
+  if (/booking window/i.test(message))
+    return { title: "Too far ahead", message: "That date is too far ahead to book yet. Choose an earlier date." };
+  if (/working hours/i.test(message))
+    return { title: "Outside working hours", message: "This professional doesn’t work at that time. Choose a time within their working hours." };
+  if (/away at that time/i.test(message))
+    return { title: "Professional is away", message: "This professional is away at that time. Choose another day or time." };
+  if (/scheduled break/i.test(message))
+    return { title: "Professional is on a break", message: "This professional is on a break at that time. Choose another time." };
+  if (/fully booked/i.test(message))
+    return { title: "Fully booked", message: "That day is fully booked. Choose another day." };
+  // Price-card bookings from a conversation fail for reasons of the card itself.
+  if (/price card has expired/i.test(message))
+    return { title: "Price card expired", message: "This price card has expired. Ask the professional to send a new one." };
+  if (/price card (was withdrawn|is no longer available)/i.test(message))
+    return { title: "Price card withdrawn", message: "The professional withdrew this price card. Ask them to send a new one." };
+  if (/price card has already been booked/i.test(message))
+    return { title: "Already booked", message: "This price card has already been booked. Check your bookings, or ask the professional for a new one." };
+  if (/no longer accepting bookings/i.test(message))
+    return { title: "Not taking bookings", message: "This professional isn’t taking bookings right now. Please try again later." };
   return {
     title: "That slot just went",
     message:
       "That time is no longer available. Choose another time and we’ll keep your details here.",
   };
 }
+
+/** `pending_payment` until the deposit is verified, then promoted server-side. */
+export type BookingFlowStatus = "pending_payment" | "requested" | "confirmed";
+/** `POST /v1/bookings` response. */
+type ReservedRow = {
+  id: string;
+  booking_reference: string;
+  status: BookingFlowStatus;
+  payment_status: "pending" | "paid" | "failed" | "refund_pending" | "refunded";
+  price: number;
+  deposit_amount: number;
+  balance_amount: number;
+  sheree_fee_amount: number | null;
+  customer_total: number | null;
+};
+async function reserve(body: Record<string, unknown>) {
+  try {
+    const row = await api.post<ReservedRow>("/v1/bookings", { body });
+    const snapshot: BookingSnapshot = {
+      price: Number(row.price),
+      deposit_amount: Number(row.deposit_amount),
+      balance_amount: Number(row.balance_amount),
+      sheree_fee_amount: row.sheree_fee_amount == null ? null : Number(row.sheree_fee_amount),
+      customer_total: row.customer_total == null ? null : Number(row.customer_total),
+      // Bookings are GHS only (docs/api/payments.md).
+      currency: "GHS",
+    };
+    return { snapshot, id: row.id, status: row.status, reference: row.booking_reference, paid: row.payment_status === "paid" };
+  } catch (error) {
+    // The message is the reservation SQL's own text, which the alert matches on.
+    if (isApiError(error) && AVAILABILITY_CODES.has(error.code)) throw new BookingAvailabilityError(error.message);
+    throw withServerMessage(error);
+  }
+}
+/**
+ * Reserves a catalogue service. Repeating it within the 15-minute hold returns
+ * the same booking, so a retry never strands a second slot.
+ */
 export async function reserveBooking(
   serviceId: string,
   startsAt: string,
   notes?: string,
   mobileService = false,
 ) {
-  const { data, error } = await supabase.rpc("reserve_booking", {
-    service_id: serviceId,
-    starts_at: startsAt,
-    notes: notes || null,
-    mobile_service: mobileService,
-  });
-  if(error){const message=error.message??'';if(/too close|just booked|fully booked|working hours|scheduled break|away at that time/i.test(message))throw new BookingAvailabilityError(message);throw error}
-  const id = data as string;
-  const { data: booking, error: statusError } = await supabase
-    .from("bookings" as never)
-    .select("status,booking_reference,price,deposit_amount,balance_amount,sheree_fee_amount,customer_total,currency")
-    .eq("id", id)
-    .single();
-  if (statusError) throw statusError;
-  return {
-    snapshot: booking as unknown as BookingSnapshot,
-    id,
-    status:(booking as unknown as{status:"requested"|"confirmed";booking_reference:string}).status,
-    reference:(booking as unknown as{status:"requested"|"confirmed";booking_reference:string}).booking_reference,
-  };
+  return reserve({ service_id: serviceId, starts_at: startsAt, notes: notes || null, mobile_service: mobileService });
+}
+/** Re-reads a booking's status, e.g. after a zero-amount checkout promoted it. */
+export async function fetchBookingStatus(bookingId: string): Promise<BookingFlowStatus> {
+  return (await api.get<{ status: BookingFlowStatus }>(`/v1/me/bookings/${bookingPath(bookingId)}`)).status;
 }
 /**
- * A conversation price card as mirrored into Postgres.
+ * A conversation price card, as the booking screen shows it.
  *
- * The booking UI only ever renders this row: it is written by Convex from the
- * card the professional authored, and the booking RPC re-reads it too. Nothing
- * on this screen is allowed to override its price.
+ * The price shown here is display only: `POST /v1/bookings` re-reads the card's
+ * Postgres mirror and charges that, so nothing on this screen can change it.
  */
 export type CustomPriceCard = {
   id: string;
@@ -90,54 +149,51 @@ export type CustomPriceCard = {
   expiresAt: string | null;
   bookingId: string | null;
 };
-
+/** The fields of Convex's `priceCards.get` view this screen needs. */
+export type PriceCardSource = {
+  serviceName: string;
+  description: string | null;
+  priceMinor: number;
+  currency: string;
+  durationMinutes: number;
+  status: CustomPriceCard["status"];
+  bookingId: string | null;
+  expiresAt: number | null;
+};
+/**
+ * Loads a price card for booking.
+ *
+ * TODO(api): there is no route that reads `conversation_price_cards`; the card
+ * is read from Convex (which the Postgres mirror is written from) through
+ * `readCard`, and the professional's profile id from their account id
+ * (`professionalUserId`, the conversation peer in the booking link).
+ */
 export async function fetchConversationPriceCard(
   priceCardId: string,
+  professionalUserId: string,
+  readCard: (priceCardId: string) => Promise<PriceCardSource | null>,
 ): Promise<CustomPriceCard | null> {
-  const { data, error } = await supabase
-    .from("conversation_price_cards" as never)
-    .select(
-      "id,professional_user_id,customer_user_id,service_name,description,price,currency,duration_minutes,status,expires_at,booking_id",
-    )
-    .eq("id", priceCardId)
-    .maybeSingle();
-  if (error) throw error;
-  const row = data as unknown as {
-    id: string;
-    professional_user_id: string;
-    customer_user_id: string;
-    service_name: string;
-    description: string | null;
-    price: number | string;
-    currency: string;
-    duration_minutes: number;
-    status: CustomPriceCard["status"];
-    expires_at: string | null;
-    booking_id: string | null;
-  } | null;
-  if (!row) return null;
-
-  const { data: profile, error: profileError } = await supabase
-    .from("professional_profiles")
-    .select("id")
-    .eq("user_id", row.professional_user_id)
-    .maybeSingle();
-  if (profileError) throw profileError;
+  const card = await readCard(priceCardId);
+  if (!card) return null;
+  const rows = await api.get<Array<{ professional_id: string; user_id: string }>>("/v1/professionals/badges", {
+    auth: "optional",
+    query: { user_ids: professionalUserId },
+  });
+  const profile = rows.find((row) => row.user_id === professionalUserId);
   if (!profile) return null;
-
   return {
-    id: row.id,
-    professionalUserId: row.professional_user_id,
-    customerUserId: row.customer_user_id,
-    professionalProfileId: (profile as unknown as { id: string }).id,
-    serviceName: row.service_name,
-    description: row.description,
-    price: Number(row.price),
-    currency: row.currency || "GHS",
-    durationMinutes: Number(row.duration_minutes),
-    status: row.status,
-    expiresAt: row.expires_at,
-    bookingId: row.booking_id,
+    id: priceCardId,
+    professionalUserId,
+    customerUserId: api.session.user()?.id ?? "",
+    professionalProfileId: profile.professional_id,
+    serviceName: card.serviceName,
+    description: card.description,
+    price: card.priceMinor / 100,
+    currency: card.currency || "GHS",
+    durationMinutes: Number(card.durationMinutes),
+    status: card.status,
+    expiresAt: card.expiresAt == null ? null : new Date(card.expiresAt).toISOString(),
+    bookingId: card.bookingId,
   };
 }
 
@@ -147,32 +203,17 @@ export async function fetchCustomBookingSlots(
   durationMinutes: number,
   date: string,
 ): Promise<BookingSlot[]> {
-  const { data, error } = await supabase.rpc(
-    "get_booking_slots_custom" as never,
-    {
-      p_profile_id: profileId,
-      p_duration_minutes: durationMinutes,
-      p_booking_date: date,
-    } as never,
-  );
-  if (error) throw error;
-  return ((data ?? []) as unknown as Array<{
-    slot_time: string;
-    is_available: boolean;
-    unavailable_reason: string | null;
-  }>).map((row) => ({
-    time: row.slot_time,
-    available: row.is_available,
-    reason: row.unavailable_reason,
-  }));
+  return api.get<BookingSlot[]>(`/v1/professionals/${key(profileId)}/custom-slots`, {
+    query: { duration_minutes: Math.round(durationMinutes), date },
+  });
 }
 
 /**
- * Reserves a conversation service through the existing booking engine.
+ * Reserves a conversation service through the same booking engine.
  *
  * The only inputs are the card id, a time and a note: the price and duration
- * come from the Postgres mirror inside `reserve_custom_booking`, so they cannot
- * be substituted by this client.
+ * come from the card's Postgres mirror server-side, so this client cannot
+ * substitute them.
  */
 export async function reserveCustomBooking(
   priceCardId: string,
@@ -180,41 +221,7 @@ export async function reserveCustomBooking(
   notes?: string,
   mobileService = false,
 ) {
-  const { data, error } = await supabase.rpc(
-    "reserve_custom_booking" as never,
-    {
-      price_card_id: priceCardId,
-      starts_at: startsAt,
-      notes: notes || null,
-      mobile_service: mobileService,
-    } as never,
-  );
-  if (error) {
-    const message = error.message ?? "";
-    if (/too close|just booked|fully booked|working hours|scheduled break|away at that time|booking window/i.test(message)) {
-      throw new BookingAvailabilityError(message);
-    }
-    throw error;
-  }
-  const id = data as string;
-  const { data: booking, error: statusError } = await supabase
-    .from("bookings" as never)
-    .select("status,booking_reference,price,deposit_amount,balance_amount,sheree_fee_amount,customer_total,currency,payment_status")
-    .eq("id", id)
-    .single();
-  if (statusError) throw statusError;
-  const row = booking as unknown as {
-    status: "requested" | "confirmed";
-    booking_reference: string;
-    payment_status: "pending" | "paid";
-  };
-  return {
-    snapshot: booking as unknown as BookingSnapshot,
-    id,
-    status: row.status,
-    reference: row.booking_reference,
-    paid: row.payment_status === "paid",
-  };
+  return reserve({ price_card_id: priceCardId, starts_at: startsAt, notes: notes || null, mobile_service: mobileService });
 }
 
 export type PaystackSession = {
@@ -222,63 +229,73 @@ export type PaystackSession = {
   authorizationUrl: string;
   reference: string;
   paid: boolean;
+  /** Pesewas Paystack will charge (deposit plus Sheree's fee); null when nothing is due. */
+  amount: number | null;
+  /** The professional's share inside `amount`, in pesewas. */
+  depositAmount: number | null;
+  /** Sheree's service fee inside `amount`, in pesewas. */
+  shereeFee: number | null;
 };
-async function functionError(error: unknown, data: unknown) {
-  if (data && typeof data === "object" && "error" in data)
-    return String((data as { error: unknown }).error);
-  if (error instanceof FunctionsHttpError) {
-    try {
-      const body = await error.context.json();
-      if (body?.error) return String(body.error);
-    } catch {
-      /* use the SDK message */
-    }
-  }
-  return error instanceof Error ? error.message : "Payment service unavailable";
-}
+/**
+ * Where Paystack sends the customer back. The server only keeps https://sheree.world
+ * URLs (no open redirect); elsewhere (localhost, previews) Paystack falls back
+ * to its dashboard callback.
+ */
+const paymentCallbackUrl = (bookingId: string) =>
+  typeof window === "undefined"
+    ? undefined
+    : `${window.location.origin}/booking/return?bookingId=${encodeURIComponent(bookingId)}`;
 export async function initializeDeposit(
   bookingId: string,
 ): Promise<PaystackSession> {
-  const { data, error } = await supabase.functions.invoke(
-    "paystack-initialize",
-    { body: { bookingId } },
-  );
-  if (error) throw new Error(await functionError(error, data));
-  if (data?.error) throw new Error(data.error);
+  let data: Partial<PaystackSession> & { paid?: boolean };
+  try {
+    // Safe to resend: the server reuses the open Paystack session for this booking.
+    data = await api.post<Partial<PaystackSession> & { paid?: boolean }>(`/v1/bookings/${bookingPath(bookingId)}/checkout`, {
+      body: { callback_url: paymentCallbackUrl(bookingId) },
+    });
+  } catch (error) {
+    throw withServerMessage(error);
+  }
   return {
     accessCode: data.accessCode ?? "",
     authorizationUrl: data.authorizationUrl ?? "",
     reference: data.reference ?? "",
     paid: Boolean(data.paid),
+    amount: typeof data.amount === "number" ? data.amount : null,
+    depositAmount: typeof data.depositAmount === "number" ? data.depositAmount : null,
+    shereeFee: typeof data.shereeFee === "number" ? data.shereeFee : null,
   };
 }
 export async function verifyDeposit(bookingId: string, reference: string) {
-  const { data, error } = await supabase.functions.invoke("paystack-verify", {
-    body: { bookingId, reference },
-  });
-  if (error) throw new Error(await functionError(error, data));
-  if (data?.error) throw new Error(data.error);
-  return Boolean(data.paid);
+  try {
+    const data = await api.post<{ paid: boolean }>(`/v1/bookings/${bookingPath(bookingId)}/verify-payment`, {
+      body: { reference },
+    });
+    return Boolean(data.paid);
+  } catch (error) {
+    throw withServerMessage(error);
+  }
 }
+/**
+ * Releases a reservation whose payment was abandoned (cancelled with reason
+ * `payment_abandoned`); a payment that lands afterwards is refunded server-side.
+ */
 export async function releaseUnpaidBooking(bookingId: string) {
-  const { error } = await supabase.rpc("release_unpaid_booking" as never, {
-    booking_id: bookingId,
-  } as never);
-  if (error) throw error;
+  await api.post<{ released: boolean }>(`/v1/bookings/${bookingPath(bookingId)}/release`);
 }
 export async function cancelCustomerBooking(bookingId: string) {
-  const { data, error } = await supabase.functions.invoke("booking-manage", {
-    body: {
-      bookingId,
-      action: "customer_cancel",
-      reason: "Cancelled by customer",
-    },
-  });
-  if (error) throw new Error(await functionError(error, data));
-  if (data?.error) throw new Error(data.error);
-  return data as { status: "cancelled"; refund: "pending" | "failed" | "processing" | "needs_attention" | "refunded" | null; refundAmount?: number; professionalCompensation?: number; warning?: string; supportCode?: string };
+  try {
+    return await api.post<{ status: "cancelled"; refund: "pending" | "failed" | "processing" | "needs_attention" | "refunded" | null; refundAmount?: number; professionalCompensation?: number; /** Sheree service fee returned to the customer. */ shereeFeeRefunded?: number; warning?: string; supportCode?: string }>(
+      `/v1/me/bookings/${bookingPath(bookingId)}/cancel`,
+      { body: { reason: "Cancelled by customer" } },
+    );
+  } catch (error) {
+    throw withServerMessage(error);
+  }
 }
-export class RescheduleAvailabilityError extends Error {
+/** A subclass so screens that check `BookingAvailabilityError` catch it too. */
+export class RescheduleAvailabilityError extends BookingAvailabilityError {
   constructor(message: string) {
     super(message);
     this.name = "RescheduleAvailabilityError";
@@ -287,12 +304,13 @@ export class RescheduleAvailabilityError extends Error {
 export type RescheduleBooking = {
   id: string;
   professionalId: string;
+  /** Empty for a price-card booking, which has no catalogue service. */
   serviceId: string;
   serviceName: string;
   startsAt: string;
   endsAt: string;
   notes: string | null;
-  status: "requested" | "confirmed";
+  status: "pending_payment" | "requested" | "confirmed";
   paymentStatus: "pending" | "paid";
   price: number;
   depositAmount: number;
@@ -300,43 +318,58 @@ export type RescheduleBooking = {
   isMobileService: boolean;
   travelFee: number;
 };
+/** `GET /v1/me/bookings/:id` and the list items (`docs/api/bookings.md`). */
+type MyBookingRow = {
+  id: string;
+  booking_reference: string;
+  status: CustomerBooking["status"];
+  payment_status: CustomerBooking["paymentStatus"];
+  starts_at: string;
+  ends_at: string;
+  service_name: string;
+  price: number;
+  deposit_amount: number;
+  balance_amount: number;
+  travel_fee: number;
+  sheree_fee_amount: number | null;
+  customer_total: number | null;
+  is_mobile_service: boolean;
+  professional_id: string;
+  service_id: string | null;
+  notes: string | null;
+  cancellation_policy: string | null;
+  professional_name: string;
+  avatar_url: string | null;
+  professional_location: string | null;
+  reviewed: boolean;
+};
+const feeOrNull = (value: number | null | undefined) => (value === null || value === undefined ? null : Number(value));
+
+/** One of your bookings as the customer; not found (or not yours) reads as an AppError. */
+async function fetchMyBooking(bookingId: string): Promise<MyBookingRow> {
+  try {
+    return await api.get<MyBookingRow>(`/v1/me/bookings/${bookingPath(bookingId)}`);
+  } catch (error) {
+    if (errorCode(error) === "booking_not_found") throw new AppError("We couldn’t find this appointment.", "not_found");
+    throw error;
+  }
+}
+
 export async function fetchBookingForReschedule(
   bookingId: string,
 ): Promise<RescheduleBooking> {
-  const { data, error } = await supabase
-    .from("bookings" as never)
-    .select(
-      "id,professional_id,service_id,service_name,starts_at,ends_at,notes,status,payment_status,price,deposit_amount,balance_amount,is_mobile_service,travel_fee",
-    )
-    .eq("id", bookingId)
-    .single();
-  if (error) throw error;
-  const row = data as unknown as {
-    id: string;
-    professional_id: string;
-    service_id: string;
-    service_name: string;
-    starts_at: string;
-    ends_at: string;
-    notes: string | null;
-    status: RescheduleBooking["status"];
-    payment_status: RescheduleBooking["paymentStatus"];
-    price: number | string;
-    deposit_amount: number | string;
-    balance_amount: number | string;
-    is_mobile_service: boolean;
-    travel_fee: number | string;
-  };
+  // Rescheduling is customer-only; the API only returns your own bookings.
+  const row = await fetchMyBooking(bookingId);
   return {
     id: row.id,
     professionalId: row.professional_id,
-    serviceId: row.service_id,
+    serviceId: row.service_id ?? "",
     serviceName: row.service_name,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     notes: row.notes,
-    status: row.status,
-    paymentStatus: row.payment_status,
+    status: row.status as RescheduleBooking["status"],
+    paymentStatus: row.payment_status as RescheduleBooking["paymentStatus"],
     price: Number(row.price),
     depositAmount: Number(row.deposit_amount),
     balanceAmount: Number(row.balance_amount),
@@ -350,23 +383,15 @@ export async function rescheduleBooking(
   notes?: string,
   mobileService = false,
 ) {
-  const { data, error } = await supabase.rpc("reschedule_booking" as never, {
-    booking_id: bookingId,
-    new_starts_at: startsAt,
-    notes: notes || null,
-    mobile_service: mobileService,
-  } as never);
-  if (error) {
-    const message = error.message ?? "";
-    if (
-      /too close|just booked|fully booked|working hours|scheduled break|away at that time|outside the booking window/i.test(
-        message,
-      )
-    )
-      throw new RescheduleAvailabilityError(message);
-    throw error;
+  try {
+    const row = await api.post<MyBookingRow>(`/v1/bookings/${bookingPath(bookingId)}/reschedule`, {
+      body: { starts_at: startsAt, notes: notes || null, mobile_service: mobileService },
+    });
+    return row.id;
+  } catch (error) {
+    if (isApiError(error) && AVAILABILITY_CODES.has(error.code)) throw new RescheduleAvailabilityError(error.message);
+    throw withServerMessage(error);
   }
-  return data as string;
 }
 
 export type CustomerBooking = {
@@ -376,7 +401,7 @@ export type CustomerBooking = {
   serviceName: string;
   startsAt: string;
   endsAt: string;
-  status: "requested" | "confirmed" | "cancelled" | "completed";
+  status: "pending_payment" | "requested" | "confirmed" | "cancelled" | "completed" | "no_show";
   paymentStatus: "pending" | "paid" | "failed" | "refund_pending" | "refunded";
   price: number;
   depositAmount: number;
@@ -386,73 +411,41 @@ export type CustomerBooking = {
   cancellationPolicy: string | null;
   professionalName: string;
   avatarUrl: string | null;
+  /** Where the appointment happens. */
+  professionalLocation: string | null;
   reviewed: boolean;
 };
-type BookingRow = {
-  id: string;
-  professional_id: string;
-  service_id: string;
-  service_name: string;
-  starts_at: string;
-  ends_at: string;
-  status: CustomerBooking["status"];
-  payment_status: CustomerBooking["paymentStatus"];
-  price: number | string;
-  deposit_amount: number | string;
-  balance_amount: number | string;
-  sheree_fee_amount: number | string | null;
-  currency: string;
-  cancellation_policy: string | null;
-  professional_profiles:
-    | {
-        display_name: string | null;
-        business_name: string;
-        profile_photo_url: string | null;
-      }
-    | Array<{
-        display_name: string | null;
-        business_name: string;
-        profile_photo_url: string | null;
-      }>
-    | null;
-  reviews: { id: string } | Array<{ id: string }> | null;
-};
-export type BookingCursor={startsAt:string;id:string};
-export async function fetchCustomerBookings(cursor:BookingCursor|null=null,pageSize=30) {
-  let query = supabase
-    .from("bookings" as never)
-    .select(
-      "id,professional_id,service_id,service_name,starts_at,ends_at,status,payment_status,price,deposit_amount,balance_amount,sheree_fee_amount,currency,cancellation_policy,professional_profiles(display_name,business_name,profile_photo_url),reviews(id)",
-    ).order("starts_at", { ascending: false }).order("id",{ascending:false}).limit(pageSize) as any;
-  if(cursor)query=query.or(`starts_at.lt.${cursor.startsAt},and(starts_at.eq.${cursor.startsAt},id.lt.${cursor.id})`);
-  const {data,error}=await query;
-  if (error) throw error;
-  const rows=(data??[]) as unknown as BookingRow[];
-  const items=rows.map((row) => {
-    const joined = Array.isArray(row.professional_profiles)
-      ? row.professional_profiles[0]
-      : row.professional_profiles;
-    return {
-      id: row.id,
-      professionalId: row.professional_id,
-      serviceId: row.service_id,
-      serviceName: row.service_name,
-      startsAt: row.starts_at,
-      endsAt: row.ends_at,
-      status: row.status,
-      paymentStatus: row.payment_status,
-      price: Number(row.price),
-      depositAmount: Number(row.deposit_amount),
-      balanceAmount: Number(row.balance_amount),
-      shereeFeeAmount: row.sheree_fee_amount == null ? null : Number(row.sheree_fee_amount),
-      currency: row.currency,
-      cancellationPolicy: row.cancellation_policy,
-      professionalName:
-        joined?.display_name || joined?.business_name || "Your professional",
-      avatarUrl: joined?.profile_photo_url ?? null,
-      reviewed: Array.isArray(row.reviews) ? row.reviews.length > 0 : Boolean(row.reviews),
-    };
-  });const last=rows.at(-1);return{items,nextCursor:rows.length===pageSize&&last?{startsAt:last.starts_at,id:last.id}:null};
+/** Opaque, from the API: pass `nextCursor` back as it came. */
+export type BookingCursor = string;
+/**
+ * Your bookings as the customer, latest first. The API leaves out unpaid and
+ * abandoned checkouts (a checkout in flight is not an appointment).
+ */
+export async function fetchCustomerBookings(cursor: BookingCursor | null = null, pageSize = 30) {
+  const page = await api.get<Page<MyBookingRow>>("/v1/me/bookings", {
+    query: { cursor: cursor ?? undefined, page_size: Math.min(50, pageSize) },
+  });
+  const items: CustomerBooking[] = page.items.map((row) => ({
+    id: row.id,
+    professionalId: row.professional_id,
+    serviceId: row.service_id ?? "",
+    serviceName: row.service_name,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    status: row.status,
+    paymentStatus: row.payment_status,
+    price: Number(row.price),
+    depositAmount: Number(row.deposit_amount),
+    balanceAmount: Number(row.balance_amount),
+    shereeFeeAmount: feeOrNull(row.sheree_fee_amount),
+    currency: "GHS",
+    cancellationPolicy: row.cancellation_policy,
+    professionalName: row.professional_name || "Your professional",
+    avatarUrl: row.avatar_url ?? null,
+    professionalLocation: row.professional_location ?? null,
+    reviewed: Boolean(row.reviewed),
+  }));
+  return { items, nextCursor: page.next_cursor as BookingCursor | null };
 }
 export type DisputeCategory =
   | "service_quality"
@@ -475,42 +468,20 @@ export type DisputeBooking = {
 export async function fetchBookingForDispute(
   bookingId: string,
 ): Promise<DisputeBooking> {
-  const { data, error } = await supabase
-    .from("bookings" as never)
-    .select(
-      "id,service_name,starts_at,status,payment_status,deposit_amount,sheree_fee_amount,currency,professional_profiles(display_name,business_name)",
-    )
-    .eq("id", bookingId)
-    .single();
-  if (error) throw error;
-  const row = data as unknown as {
-    id: string;
-    service_name: string;
-    starts_at: string;
-    status: CustomerBooking["status"];
-    payment_status: CustomerBooking["paymentStatus"];
-    deposit_amount: number | string;
-    sheree_fee_amount: number | string | null;
-    currency: string;
-    professional_profiles:
-      | { display_name: string | null; business_name: string }
-      | Array<{ display_name: string | null; business_name: string }>
-      | null;
-  };
-  const joined = Array.isArray(row.professional_profiles)
-    ? row.professional_profiles[0]
-    : row.professional_profiles;
+  // Disputes are raised here by the customer who booked the visit.
+  // TODO(api): a professional can dispute too (POST accepts both sides), but
+  // there is no read of one booking for them; this page stays customer-only.
+  const row = await fetchMyBooking(bookingId);
   return {
     id: row.id,
     serviceName: row.service_name,
-    professionalName:
-      joined?.display_name || joined?.business_name || "Your professional",
+    professionalName: row.professional_name || "Your professional",
     startsAt: row.starts_at,
     status: row.status,
     paymentStatus: row.payment_status,
     depositAmount: Number(row.deposit_amount),
-    shereeFeeAmount: row.sheree_fee_amount == null ? null : Number(row.sheree_fee_amount),
-    currency: row.currency,
+    shereeFeeAmount: feeOrNull(row.sheree_fee_amount),
+    currency: "GHS",
   };
 }
 export async function submitBookingDispute(input: {
@@ -520,16 +491,16 @@ export async function submitBookingDispute(input: {
   description: string;
   requestedRefund?: number | null;
 }) {
-  const { data, error } = await supabase.rpc(
-    "submit_booking_dispute" as never,
-    {
-      booking_id: input.bookingId,
-      dispute_category: input.category,
-      dispute_subject: input.subject,
-      dispute_description: input.description,
-      requested_refund: input.requestedRefund ?? null,
-    } as never,
-  );
-  if (error) throw error;
-  return data as { id: string; status: "open" };
+  try {
+    return await api.post<{ id: string; status: "open" }>(`/v1/bookings/${bookingPath(input.bookingId)}/disputes`, {
+      body: {
+        category: input.category,
+        subject: input.subject.trim(),
+        description: input.description.trim(),
+        ...(input.requestedRefund ? { requested_refund: input.requestedRefund } : {}),
+      },
+    });
+  } catch (error) {
+    throw withServerMessage(error);
+  }
 }

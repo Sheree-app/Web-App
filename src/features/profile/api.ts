@@ -1,5 +1,5 @@
 import { cachedQuery } from '@/lib/query-cache';
-import { supabase } from '@/lib/supabase';
+import { api } from '@/lib/api';
 import { EMPTY_SOCIAL_LINKS, type SocialLinks } from './socials';
 
 export type CreatorWork = { id: string; image: string; caption: string; aspectRatio: number };
@@ -38,92 +38,68 @@ export type CreatorProfile = {
   socials: CreatorSocials;
 };
 
+/** `GET /v1/professionals/:key` (`sheree-backend/docs/api/profiles.md`). */
 type Payload = {
   id: string;
-  handle?: string;
+  handle: string;
   name: string;
-  business_name: string;
+  business_name: string | null;
   bio: string;
   location: string;
   verified: boolean;
+  founding: boolean;
+  official: boolean;
   avatar: string | null;
   bookings: number;
-  rating: number | string;
+  rating: number;
   review_count: number;
   category: string;
-  portfolio: Array<{ id: string; image: string; caption: string; aspect_ratio: number | string }>;
-  studio?: Array<{ id: string; image: string; aspect_ratio: number | string }>;
-  reviews?: Array<{
+  portfolio: Array<{ id: string; image: string; caption: string; aspect_ratio: number }>;
+  studio: Array<{ id: string; image: string; aspect_ratio: number }>;
+  reviews: Array<{
     id: string;
-    author: string;
+    author: string | null;
     avatar: string | null;
-    rating: number | string;
+    rating: number;
     body: string;
     service: string;
     created_at: string;
   }>;
-  socials?: Partial<CreatorSocials>;
+  socials: Partial<CreatorSocials>;
 };
 
-type StatusRow = {
-  is_founding_beautician: boolean | null;
-  is_official: boolean | null;
-};
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Resolve a professional handle while keeping legacy UUID links valid. */
+/** One request per key, shared with `fetchCreatorProfile` for five minutes. */
+function fetchPayload(key: string): Promise<Payload> {
+  const trimmed = key.trim();
+  return cachedQuery(`creator:payload:${trimmed}`, 5 * 60 * 1000, () =>
+    api.get<Payload>(`/v1/professionals/${encodeURIComponent(trimmed)}`, { auth: 'optional' }),
+  );
+}
+
+/**
+ * Resolve a professional handle while keeping legacy UUID links valid. The API
+ * resolves either form, so a UUID needs no request at all.
+ */
 export async function resolveProfileId(profileKey: string): Promise<string> {
-  const { data, error } = await (supabase.rpc as any)("resolve_profile_id", {
-    profile_key: profileKey,
-  });
-  if (!error && data) return String(data);
-
-  const table = supabase.from("professional_profiles" as never) as any;
-  const { data: handleRow } = await table
-    .select("id")
-    .eq("handle", profileKey.toLowerCase())
-    .maybeSingle();
-  return handleRow?.id ? String(handleRow.id) : profileKey;
+  if (UUID_RE.test(profileKey.trim())) return profileKey.trim();
+  try {
+    return (await fetchPayload(profileKey)).id;
+  } catch {
+    // As before: an unresolvable key is passed on, and the next read reports it.
+    return profileKey;
+  }
 }
 
 export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
   return cachedQuery(`creator:${id}`, 5 * 60 * 1000, async () => {
-    const resolvedId = await resolveProfileId(id);
-    const [profileResult, linksResult, statusResult] = await Promise.all([
-      (supabase.rpc as any)('get_creator_profile', { profile_id: resolvedId }),
-      supabase
-        .from('professional_social_links' as never)
-        .select('platform,url')
-        .eq('professional_id', resolvedId),
-      // The public RPC predates the founding/official flags; read the same
-      // server-authoritative booleans the feed uses. A deployment whose column
-      // grants lag behind simply shows no badge instead of failing the page.
-      (async () => {
-        try {
-          return await (supabase.from('professional_profiles' as never) as any)
-            .select('is_founding_beautician,is_official')
-            .eq('id', resolvedId)
-            .maybeSingle();
-        } catch {
-          return { data: null, error: null };
-        }
-      })(),
-    ]);
-
-    if (profileResult.error) throw profileResult.error;
-    if (linksResult.error) throw linksResult.error;
-    if (!profileResult.data) throw new Error('This professional profile is unavailable.');
-
-    const p = profileResult.data as unknown as Payload;
-    const status =
-      statusResult && !statusResult.error ? ((statusResult.data ?? null) as StatusRow | null) : null;
-
-    const links = { ...EMPTY_SOCIAL_LINKS };
-    for (const row of (linksResult.data ?? []) as unknown as Array<{ platform: string; url: string }>) {
-      if (row.platform in links) links[row.platform as keyof SocialLinks] = row.url;
-    }
+    const p = await fetchPayload(id);
 
     // The business name is the public name, matching the feed and mobile.
     const businessName = p.business_name?.trim() || p.name;
+    // TODO(api): the API's socials have no `youtube`; it stays empty until added.
+    const socials = p.socials ?? {};
 
     return {
       id: p.id,
@@ -133,8 +109,8 @@ export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
       bio: p.bio,
       location: p.location,
       verified: Boolean(p.verified),
-      founding: Boolean(status?.is_founding_beautician),
-      official: Boolean(status?.is_official),
+      founding: Boolean(p.founding),
+      official: Boolean(p.official),
       avatar: p.avatar,
       bookings: p.bookings,
       rating: Number(p.rating),
@@ -153,7 +129,7 @@ export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
       })),
       reviews: (p.reviews ?? []).map((x) => ({
         id: x.id,
-        author: x.author,
+        author: x.author ?? 'Sheree member',
         avatar: x.avatar,
         rating: Number(x.rating),
         body: x.body,
@@ -161,12 +137,13 @@ export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
         createdAt: x.created_at,
       })),
       socials: {
-        ...links,
-        instagram: links.instagram ?? p.socials?.instagram ?? null,
-        snapchat: links.snapchat ?? p.socials?.snapchat ?? null,
-        whatsapp: p.socials?.whatsapp ?? null,
-        telephone: p.socials?.telephone ?? null,
-      },
+        ...EMPTY_SOCIAL_LINKS,
+        ...Object.fromEntries(
+          Object.keys(EMPTY_SOCIAL_LINKS).map((key) => [key, socials[key as keyof SocialLinks] ?? null]),
+        ),
+        whatsapp: socials.whatsapp ?? null,
+        telephone: socials.telephone ?? null,
+      } as CreatorSocials,
     };
   });
 }

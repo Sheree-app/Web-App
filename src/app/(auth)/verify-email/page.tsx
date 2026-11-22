@@ -2,15 +2,24 @@
 
 import { AuthLayout } from "@/components/shell/auth-layout";
 import { Button, FormError, FormSuccess, OtpField } from "@/components/ui";
-import { supabase } from "@/lib/supabase/client";
+import { verifyEmail } from "@/features/auth/api";
+import { mapAuthError } from "@/features/auth/auth-errors";
+import { clearVerification, heldVerification, resendVerification } from "@/features/auth/pending-verification";
+import type { TokenResponse } from "@/lib/api";
+import { homeRoute, useAuth } from "@/providers/auth-provider";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 const RESEND_SECONDS = 60;
+/**
+ * The code check needs the token from the sign-up or sign-in a moment ago,
+ * held in memory only; after a page reload signing in again sends a new code.
+ */
+const SIGN_IN_AGAIN = "This page was reloaded, so we need you to sign in again. We’ll send a fresh code.";
 
 export default function VerifyEmailPage() {
-  const router = useRouter();
+  const { startSession } = useAuth();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") ?? "";
 
@@ -30,6 +39,16 @@ export default function VerifyEmailPage() {
     return () => window.clearInterval(timer);
   }, [seconds]);
 
+  const finish = useCallback(
+    async (tokens: TokenResponse) => {
+      clearVerification();
+      const profile = await startSession(tokens, email);
+      // A full load, so cached "go to /sign-in" redirects are dropped.
+      window.location.replace(homeRoute(profile));
+    },
+    [email, startSession],
+  );
+
   const verify = useCallback(
     async (token?: string) => {
       const candidate = token ?? code;
@@ -41,34 +60,25 @@ export default function VerifyEmailPage() {
         setError("Enter the complete six-digit code.");
         return;
       }
+      const held = heldVerification(email);
+      if (!held) {
+        setError(SIGN_IN_AGAIN);
+        return;
+      }
 
       setLoading(true);
       setError("");
-
-      const { data, error: authError } = await supabase.auth.verifyOtp({
-        email,
-        token: candidate,
-        type: "email",
-      });
-
-      setLoading(false);
-
-      if (authError) {
-        setCode("");
-        setError(
-          authError.message.toLowerCase().includes("expired")
-            ? "That code has expired. Request a fresh one below."
-            : "That code isn’t right. Check the email and try again.",
-        );
-        return;
+      try {
+        const tokens = await verifyEmail(held.token, candidate);
+        await finish(tokens);
+      } catch (verifyError) {
+        setLoading(false);
+        const failure = mapAuthError(verifyError, "verify-code");
+        if (failure.clearCode) setCode("");
+        setError(failure.message);
       }
-      if (!data.session) {
-        setError("Email verified, but sign-in could not start.");
-        return;
-      }
-      router.replace("/onboarding");
     },
-    [code, email, router],
+    [code, email, finish],
   );
 
   const resend = async () => {
@@ -76,17 +86,24 @@ export default function VerifyEmailPage() {
     setResending(true);
     setError("");
     setSent(false);
-
-    const { error: resendError } = await supabase.auth.resend({ type: "signup", email });
-
-    setResending(false);
-    if (resendError) {
-      setError(resendError.message);
-      return;
+    try {
+      const result = await resendVerification(email);
+      if (result.kind === "verified") {
+        await finish(result.tokens);
+        return;
+      }
+      setResending(false);
+      if (result.kind === "sign_in_again") {
+        setError(SIGN_IN_AGAIN);
+        return;
+      }
+      setCode("");
+      setSeconds(RESEND_SECONDS);
+      setSent(true);
+    } catch (resendError) {
+      setResending(false);
+      setError(mapAuthError(resendError, "resend").message);
     }
-    setCode("");
-    setSeconds(RESEND_SECONDS);
-    setSent(true);
   };
 
   return (
@@ -100,6 +117,10 @@ export default function VerifyEmailPage() {
           Wrong email?{" "}
           <Link href="/sign-up" className="font-medium text-primary underline-offset-4 hover:underline">
             Start again
+          </Link>
+          {" · "}
+          <Link href="/sign-in" className="font-medium text-primary underline-offset-4 hover:underline">
+            Sign in
           </Link>
         </p>
       }

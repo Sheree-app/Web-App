@@ -9,10 +9,12 @@ import {
   fetchPostComments,
   fetchPostImages,
   setFeedReaction,
+  type Cursor,
   type PostImage,
 } from "@/features/feed/api";
 import { FeedVideo } from "@/features/feed/FeedVideo";
 import type { FeedPost } from "@/features/feed/types";
+import { errorCode, userMessage } from "@/lib/errors";
 import { timeAgo } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
@@ -78,7 +80,7 @@ export default function PostPage() {
   const [images, setImages] = useState<PostImage[]>([]);
   const [activeImage, setActiveImage] = useState(0);
   const [comments, setComments] = useState<Comment[]>([]);
-  const [cursor, setCursor] = useState<{ createdAt: string; id: string } | null>(null);
+  const [cursor, setCursor] = useState<Cursor | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -112,7 +114,11 @@ export default function PostPage() {
       })
       .catch((cause: unknown) => {
         if (active) {
-          setError(cause instanceof Error ? cause.message : "This post is unavailable right now.");
+          setError(
+            errorCode(cause) === "post_not_found"
+              ? "This story is no longer available."
+              : userMessage(cause, "This post is unavailable right now."),
+          );
         }
       })
       .finally(() => {
@@ -240,7 +246,7 @@ export default function PostPage() {
     } catch (cause) {
       setComments((current) => current.filter((item) => item.id !== optimistic.id));
       setCommentBody(body);
-      showError("Comment not posted", cause instanceof Error ? cause.message : "Try again.");
+      showError("Comment not posted", userMessage(cause, "Try again."));
     } finally {
       setPosting(false);
     }

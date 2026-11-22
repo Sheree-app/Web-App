@@ -1,4 +1,5 @@
-import { supabase } from "@/lib/supabase";
+import { api } from "@/lib/api";
+import { errorCode } from "@/lib/errors";
 import { defaultSchedule, type Schedule } from "./data";
 export type BookingRequest = {
   id: string;
@@ -17,65 +18,33 @@ export type CalendarAppointment = {
   endsAt: string;
   status: "requested" | "confirmed";
 };
+/** The next 20 requested/confirmed appointments, not your own bookings as a customer. */
 export async function fetchUpcomingAppointments(): Promise<
   CalendarAppointment[]
 > {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return [];
-  const { data: profile } = await supabase
-    .from("professional_profiles")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!profile) return [];
-  // `bookings` predates the generated Supabase client types in this project.
-  const { data, error } = await (supabase as any)
-    .from("bookings")
-    .select("id,booking_reference,service_name,starts_at,ends_at,status")
-    .eq("professional_id", profile.id)
-    .neq("customer_id", user.id)
-    .gte("starts_at", new Date().toISOString())
-    .in("status", ["requested", "confirmed"])
-    .order("starts_at", { ascending: true })
-    .limit(20);
-  if (error) throw error;
-  return (data ?? []).map((row: {
-    id: string;
-    booking_reference: string;
-    service_name: string;
-    starts_at: string;
-    ends_at: string;
-    status: CalendarAppointment["status"];
-  }) => ({
-    id: row.id,
-    bookingReference: row.booking_reference,
-    serviceName: row.service_name,
-    startsAt: row.starts_at,
-    endsAt: row.ends_at,
-    status: row.status as CalendarAppointment["status"],
-  }));
+  try {
+    const rows = await api.get<Array<{ id: string; booking_reference: string; service_name: string; starts_at: string; ends_at: string; status: CalendarAppointment["status"] }>>("/v1/me/professional/upcoming");
+    return rows.map((row) => ({
+      id: row.id,
+      bookingReference: row.booking_reference,
+      serviceName: row.service_name,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      status: row.status,
+    }));
+  } catch (error) {
+    // No professional profile yet: an empty calendar, as before.
+    if (errorCode(error) === "not_a_professional") return [];
+    throw error;
+  }
 }
+/** Paid requests waiting for approval, soonest first. */
 export async function fetchBookingRequests(): Promise<BookingRequest[]> {
-  const { data, error } = await supabase.rpc(
-    "get_professional_booking_requests" as never,
-  );
-  if (error) throw error;
-  return (
-    (data ?? []) as Array<{
-      id: string;
-      booking_reference:string;
-      customer_name: string;
-      service_name: string;
-      starts_at: string;
-      deposit_amount: number | string;
-      payment_status: BookingRequest["paymentStatus"];
-    }>
-  ).map((x) => ({
+  const rows = await api.get<Array<{ id: string; booking_reference: string; customer_name: string | null; service_name: string; starts_at: string; deposit_amount: number | string; payment_status: BookingRequest["paymentStatus"] }>>("/v1/me/professional/booking-requests");
+  return rows.map((x) => ({
     id: x.id,
-    bookingReference:x.booking_reference,
-    customerName: x.customer_name,
+    bookingReference: x.booking_reference,
+    customerName: x.customer_name ?? "Client",
     serviceName: x.service_name,
     startsAt: x.starts_at,
     depositAmount: Number(x.deposit_amount),
@@ -103,10 +72,9 @@ type Raw = {
   }>;
   blocks?: Array<{ starts_at: string; ends_at: string; label: string }>;
 };
+/** `GET /v1/me/schedule` (`sheree-backend/docs/api/schedule.md`). */
 export async function fetchSchedule(): Promise<Schedule> {
-  const { data, error } = await supabase.rpc("get_my_schedule");
-  if (error) throw error;
-  const raw = data as Raw;
+  const raw = await api.get<Raw>("/v1/me/schedule");
   return {
     preferences: {
       maxAppointmentsPerDay: raw.preferences?.max_appointments_per_day ?? 8,
@@ -138,8 +106,9 @@ export async function fetchSchedule(): Promise<Schedule> {
       })) ?? [],
   };
 }
-export async function saveSchedule(schedule: Schedule) {
-  const payload = {
+/** The schedule in the API's shape (`PUT /v1/me/schedule`). */
+export function schedulePayload(schedule: Schedule) {
+  return {
     preferences: {
       max_appointments_per_day: schedule.preferences.maxAppointmentsPerDay,
       buffer_minutes: schedule.preferences.bufferMinutes,
@@ -148,22 +117,26 @@ export async function saveSchedule(schedule: Schedule) {
     },
     hours: schedule.hours.map((x) => ({
       day_of_week: x.dayOfWeek,
-      opens_at: x.opensAt,
-      closes_at: x.closesAt,
+      opens_at: x.isClosed ? null : x.opensAt.slice(0, 5),
+      closes_at: x.isClosed ? null : x.closesAt.slice(0, 5),
       is_closed: x.isClosed,
     })),
     breaks: schedule.breaks.map((x) => ({
       day_of_week: x.dayOfWeek,
       starts_at: x.startsAt,
       ends_at: x.endsAt,
-      label: x.label,
+      ...label(x.label),
     })),
     blocks: schedule.blocks.map((x) => ({
       starts_at: x.startsAt,
       ends_at: x.endsAt,
-      label: x.label,
+      ...label(x.label),
     })),
   };
-  const { error } = await supabase.rpc("save_my_schedule", { payload });
-  if (error) throw error;
 }
+export async function saveSchedule(schedule: Schedule) {
+  // Replaces preferences, all 7 days, breaks and time off in one transaction.
+  await api.put<Raw>("/v1/me/schedule", { body: schedulePayload(schedule) });
+}
+// The API rejects an empty label; leaving it out gets its default ("Break" / "Unavailable").
+const label = (value: string | undefined) => (value?.trim() ? { label: value.trim().slice(0, 60) } : {});

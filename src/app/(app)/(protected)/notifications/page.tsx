@@ -9,6 +9,7 @@ import {
   notificationDestination,
   recordAppOpen,
   type AppNotification,
+  type NotificationCursor,
 } from "@/features/notifications/api";
 import { useAuth } from "@/providers/auth-provider";
 import { useRouter } from "next/navigation";
@@ -67,7 +68,7 @@ export default function NotificationsPage() {
   const professional = appMode === "professional";
 
   const [items, setItems] = useState<AppNotification[]>([]);
-  const [cursor, setCursor] = useState<{ createdAt: string; id: string } | null>(null);
+  const [cursor, setCursor] = useState<NotificationCursor | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);

@@ -6,7 +6,7 @@ import { MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { useMessaging } from "@/providers/messaging-provider";
-import { supabase } from "@/lib/supabase";
+import { api as sheree } from "@/lib/api";
 import { api } from "../../../convex/_generated/api";
 
 /**
@@ -91,12 +91,14 @@ function StartConnected({
     setBusy(true);
     setError("");
     try {
-      const { data, error: lookupError } = await supabase
-        .from("professional_profiles")
-        .select("user_id")
-        .eq("id", professionalId)
-        .single();
-      if (lookupError || !data) {
+      // The badges route maps a profile id to its account id (messaging
+      // addresses accounts); a profile it doesn't know is left out.
+      const rows = await sheree.get<{ professional_id: string; user_id: string }[]>(
+        "/v1/professionals/badges",
+        { auth: "optional", query: { ids: professionalId } },
+      );
+      const data = rows.find((row) => row.professional_id === professionalId);
+      if (!data) {
         throw new Error("This professional is unavailable. Please try again.");
       }
       if (data.user_id === ownUserId) throw new Error("You cannot message yourself.");

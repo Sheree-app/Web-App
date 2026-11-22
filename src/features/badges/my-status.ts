@@ -1,11 +1,11 @@
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
 
 /**
  * The logged-in professional's detailed founding status.
  *
  * The public profile only carries the fast `is_founding_beautician` boolean.
  * The account view needs the categories, positions and open opportunities, so
- * it calls `get_my_founding_status()` instead of inferring anything client-side.
+ * it calls `GET /v1/me/founding-status` instead of inferring anything client-side.
  */
 
 export type MyFoundingBadge = {
@@ -77,13 +77,13 @@ function mapStatus(payload: Record<string, unknown>): MyFoundingStatus {
 }
 
 /**
- * Returns null for customers and for signed-out visitors (the RPC returns
- * null when the caller has no professional profile). Throws on transport
- * errors so the caller can decide whether to surface them.
+ * Returns null for customers and for signed-out visitors (the API answers with
+ * an empty body when the caller has no professional profile). Throws on
+ * transport errors so the caller can decide whether to surface them.
  */
 export async function fetchMyFoundingStatus(): Promise<MyFoundingStatus | null> {
-  const { data, error } = await supabase.rpc("get_my_founding_status" as never);
-  if (error) throw error;
+  if (!(await api.session.ready())) return null;
+  const data = await api.get<Record<string, unknown> | null | undefined>("/v1/me/founding-status");
   if (!data || typeof data !== "object") return null;
-  return mapStatus(data as Record<string, unknown>);
+  return mapStatus(data);
 }

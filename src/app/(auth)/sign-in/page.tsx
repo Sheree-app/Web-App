@@ -2,8 +2,11 @@
 
 import { AuthFooterPrompt, AuthLayout } from "@/components/shell/auth-layout";
 import { Button, FormError, Input, PasswordInput } from "@/components/ui";
-import { supabase } from "@/lib/supabase/client";
-import { useAuth } from "@/providers/auth-provider";
+import { pendingTokenFrom, signIn } from "@/features/auth/api";
+import { mapAuthError } from "@/features/auth/auth-errors";
+import { holdVerification } from "@/features/auth/pending-verification";
+import type { TokenResponse } from "@/lib/api";
+import { homeRoute, useAuth } from "@/providers/auth-provider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -39,21 +42,25 @@ function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
 }
 
 export default function SignInPage() {
-  const { refreshProfile, setPasswordReset } = useAuth();
+  const { startSession } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = safeNext(searchParams.get("next"));
+  const linkExpired = searchParams.get("error") === "link-expired";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(
+    linkExpired ? "That link is no longer valid. Sign in, and we’ll send a fresh code if one is needed." : "",
+  );
   const [loading, setLoading] = useState(false);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
 
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
       setError("Enter a valid email address.");
       return;
     }
@@ -62,68 +69,34 @@ export default function SignInPage() {
       return;
     }
 
-    setPasswordReset(false);
     setLoading(true);
-
-    let data: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["data"];
-    let authError: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["error"];
+    let tokens: TokenResponse;
     try {
-      ({ data, error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      }));
-    } catch {
-      // A dropped connection can throw instead of returning an error.
-      setLoading(false);
-      setError("We couldn’t reach Sheree. Check your connection and try again.");
-      return;
-    }
-
-    if (authError) {
-      setLoading(false);
-      setError(
-        authError.message === "Invalid login credentials"
-          ? "The email or password is incorrect."
-          : authError.message,
-      );
-      return;
-    }
-
-    // An unconfirmed account gets a fresh link instead of a dead end.
-    if (!data.user?.email_confirmed_at) {
-      await supabase.auth.signOut();
-      const normalizedEmail = email.trim().toLowerCase();
-      const { error: resendError } = await supabase.auth.resend({
-        type: "signup",
-        email: normalizedEmail,
-      });
-      setLoading(false);
-      if (resendError) {
-        setError(
-          "Verify your email before signing in. Use the verification email we sent you, or try again shortly.",
-        );
+      tokens = await signIn(normalizedEmail, password);
+    } catch (signInError) {
+      // An unverified account: signing in just sent a fresh code.
+      const pendingToken = pendingTokenFrom(signInError);
+      if (pendingToken) {
+        holdVerification(normalizedEmail, pendingToken, password);
+        setLoading(false);
+        router.replace(`/verify-email?email=${encodeURIComponent(normalizedEmail)}`);
         return;
       }
-      router.replace(`/verify-email?email=${encodeURIComponent(normalizedEmail)}`);
+      setLoading(false);
+      setError(mapAuthError(signInError, "sign-in").message);
       return;
     }
 
     // The profile only picks the destination. A slow or failed lookup must not
     // keep anyone on this screen: after a few seconds go on to /home, where the
     // app's own guards finish the job (onboarding, studio) once it loads.
-    const profile = await within(refreshProfile(data.session), 6000, null);
-
-    const destination = !profile
-      ? (next ?? "/home")
-      : !profile.onboardingCompleted
-        ? "/onboarding"
-        : (next ?? (profile.role === "professional" ? "/studio" : "/home"));
+    const profile = await within(startSession(tokens, normalizedEmail), 6000, null);
+    const destination = profile ? homeRoute(profile, next) : (next ?? "/home");
 
     // A full page load, not a client-side route change. While signed out, the
     // router prefetched links like Bookings and Messages and cached the proxy's
     // answer to them: "go to /sign-in". A soft navigation could replay that
-    // cached redirect and land back here even though the sign-in worked. A real
-    // load drops that cache and sends the new session cookie to the server.
+    // cached redirect and land back here even though the sign-in worked.
     // The button keeps spinning until the next page replaces this one.
     window.location.replace(destination);
   };

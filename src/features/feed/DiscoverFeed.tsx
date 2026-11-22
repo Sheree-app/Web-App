@@ -6,7 +6,7 @@ import { FeedCard } from "@/features/feed/FeedCard";
 import { fetchFeed } from "@/features/feed/api";
 import { fetchUnreadNotificationCount } from "@/features/notifications/api";
 import { MessageLink } from "@/features/messaging/MessageLink";
-import type { FeedPage } from "@/features/feed/rows";
+import type { FeedCursor, FeedPage } from "@/features/feed/rows";
 import type { FeedPost } from "@/features/feed/types";
 import { useAuth } from "@/providers/auth-provider";
 import { Bell, CloudOff, Images } from "lucide-react";
@@ -58,7 +58,7 @@ export function DiscoverFeed({
   const [hasMore, setHasMore] = useState(initialPage ? Boolean(initialPage.nextCursor) : true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const cursor = useRef<{ id: string } | null>(initialPage?.nextCursor ?? null);
+  const cursor = useRef<FeedCursor | null>(initialPage?.nextCursor ?? null);
   const inFlight = useRef(false);
   // Held in state rather than a ref so the observer attaches as soon as the
   // sentinel actually mounts — it only renders once there are posts.
@@ -105,6 +105,29 @@ export function DiscoverFeed({
     if (!initialPage) void load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The server renders the guest view (it never holds the login), so once the
+  // session is known the same first page (same seed, same order) is asked for
+  // again to fill in this member's likes and saves. The posts stay put.
+  useEffect(() => {
+    if (!initialPage || !signedIn) return;
+    let active = true;
+    void fetchFeed(null, PAGE_SIZE)
+      .then((page) => {
+        if (!active) return;
+        const mine = new Map(page.items.map((post) => [post.id, post]));
+        setPosts((current) =>
+          current.map((post) => {
+            const fresh = mine.get(post.id);
+            return fresh ? { ...post, liked: fresh.liked, saved: fresh.saved } : post;
+          }),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [initialPage, signedIn]);
 
   // With a server-rendered page, `load(true)` never runs, so the bell's unread
   // count is fetched on its own once the session is known.

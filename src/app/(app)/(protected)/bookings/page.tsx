@@ -1,4 +1,5 @@
 "use client";
+import { userMessage } from "@/lib/errors";
 import { usePricing } from "@/providers/pricing-provider";
 import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 
@@ -168,7 +169,7 @@ export default function BookingsPage() {
     } catch (cause) {
       showError(
         "Booking unchanged",
-        cause instanceof Error ? cause.message : "Please try again.",
+        userMessage(cause, "Please try again."),
       );
     } finally {
       setCancelling("");

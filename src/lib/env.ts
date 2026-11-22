@@ -15,6 +15,8 @@ export const env = {
   // and browser bundles can evaluate this module through different pipelines;
   // falling back directly to the existing Expo names prevents a placeholder
   // Supabase client when NEXT_PUBLIC_* has not been materialized yet.
+  /** Sheree API (NestJS) origin, without `/v1`. Empty = not configured. */
+  apiUrl: read(process.env.NEXT_PUBLIC_API_URL || process.env.EXPO_PUBLIC_API_URL).replace(/\/+$/, ""),
   convexUrl: read(process.env.NEXT_PUBLIC_CONVEX_URL || process.env.EXPO_PUBLIC_CONVEX_URL),
   supabaseUrl: read(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL),
   supabaseAnonKey: read(

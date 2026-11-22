@@ -1,26 +1,10 @@
-import { supabase } from "@/lib/supabase";
-import { FunctionsHttpError } from "@supabase/supabase-js";
+import { api } from "@/lib/api";
+import { errorCode, withServerMessage } from "@/lib/errors";
 export class PayoutAccountRequiredError extends Error {
   constructor() {
     super("Set up a payout account before completing this appointment.");
     this.name = "PayoutAccountRequiredError";
   }
-}
-async function bookingActionError(error: unknown, data: unknown) {
-  if (data && typeof data === "object" && "error" in data)
-    return String((data as { error: unknown }).error);
-  if (error instanceof FunctionsHttpError) {
-    try {
-      const body = await error.context.json();
-      if (body && typeof body === "object" && "error" in body)
-        return String((body as { error: unknown }).error);
-    } catch {
-      /* Fall through to the transport error when the response is not JSON. */
-    }
-  }
-  return error instanceof Error
-    ? error.message
-    : "Appointment could not be updated";
 }
 export type StudioBooking = {
   id: string;
@@ -81,32 +65,30 @@ const booking = (row: RawBooking): StudioBooking => ({
   price: Number(row.price),
   depositAmount: Number(row.deposit_amount),
 });
+/**
+ * A professional's action on a booking on their business. Refusals
+ * (`cannot_confirm`, `not_started`, `deposit_unpaid`, ...) keep their
+ * user-facing messages; a cancellation retries a failed or stuck refund.
+ */
 export async function manageBooking(
   bookingId: string,
   action: "confirm" | "complete" | "cancel",
   reason?: string,
 ) {
-  const { data, error } = await supabase.functions.invoke("booking-manage", {
-    body: { bookingId, action, reason },
-  });
-  const message = error || data?.error
-    ? await bookingActionError(error, data)
-    : "";
-  if (
-    action === "complete" &&
-    message === "Set up a payout account before completing this appointment."
-  )
-    throw new PayoutAccountRequiredError();
-  if (error || data?.error)
-    throw new Error(message);
-  return data;
+  try {
+    return await api.post<{ status: string; refund: string | null; payout?: string | null; refundAmount?: number; professionalCompensation?: number; shereeFeeRefunded?: number; warning?: string; supportCode?: string }>(
+      `/v1/me/professional/bookings/${encodeURIComponent(bookingId)}/${action}`,
+      action === "cancel" ? { body: reason ? { reason } : {} } : {},
+    );
+  } catch (error) {
+    // The API records the payout as processing even without an account today;
+    // kept so the studio's payout-setup prompt still works if that changes.
+    if (action === "complete" && errorCode(error) === "payout_account_missing") throw new PayoutAccountRequiredError();
+    throw withServerMessage(error);
+  }
 }
 export async function fetchProfessionalDashboard(): Promise<ProfessionalDashboard> {
-  const { data, error } = await supabase.rpc(
-    "get_professional_dashboard" as never,
-  );
-  if (error) throw error;
-  const raw = data as unknown as Raw;
+  const raw = await api.get<Raw>("/v1/me/professional/dashboard");
   return {
     name: raw.profile.name,
     businessName: raw.profile.business_name,

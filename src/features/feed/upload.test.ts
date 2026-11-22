@@ -8,10 +8,8 @@ const mocks = vi.hoisted(() => ({
   resolveVideoMime: vi.fn(),
   posterAsset: vi.fn(),
   invalidateFeedQueries: vi.fn(),
-  supabase: {
-    auth: { getUser: vi.fn() },
-    from: vi.fn(),
-  },
+  apiPost: vi.fn(),
+  fetchAccount: vi.fn(),
 }));
 
 vi.mock("@/lib/media", () => ({
@@ -44,18 +42,16 @@ vi.mock("@/lib/media/video", () => {
   };
 });
 
-vi.mock("@/lib/supabase", () => ({ supabase: mocks.supabase }));
+vi.mock("@/lib/api", () => ({ api: { post: mocks.apiPost } }));
+vi.mock("@/features/auth/api", () => ({ fetchAccount: mocks.fetchAccount }));
+vi.mock("@/features/explore/api", () => ({ fetchExploreCategories: vi.fn() }));
 vi.mock("./api", () => ({ invalidateFeedQueries: mocks.invalidateFeedQueries }));
 
 import { publishFeedPost } from "./upload";
 
-type Action = { table: string; action: string; payload?: unknown };
-
-const PROFILE = {
-  id: "prof-1",
-  business_name: "Studio Adjoa",
-  onboarding_completed_at: "2026-01-01T00:00:00Z",
-  deleted_at: null,
+const ACCOUNT = {
+  onboarding_completed: true,
+  professional: { id: "prof-1", business_name: "Studio Adjoa" },
 };
 
 const POSTER_MEDIA = {
@@ -97,68 +93,25 @@ const CLOUDINARY_VIDEO = {
   height: 1920,
 };
 
-let actions: Action[] = [];
-
-function installSupabase(options: {
-  profile?: { data: unknown; error: unknown };
-  insertResults?: Record<string, { data: unknown; error: unknown }>;
-}) {
-  actions = [];
-  mocks.supabase.auth.getUser.mockResolvedValue({
-    data: { user: { id: "user-1" } },
-    error: null,
-  });
-  mocks.supabase.from.mockImplementation((table: string) => {
-    const chain: Record<string, unknown> = {};
-    chain.select = () => chain;
-    chain.eq = () => chain;
-    chain.order = () => chain;
-    chain.in = () => chain;
-    chain.insert = (payload: unknown) => {
-      actions.push({ table, action: "insert", payload });
-      chain._result = options.insertResults?.[table] ?? {
-        data: { id: `${table}-1` },
-        error: null,
-      };
-      return chain;
-    };
-    chain.delete = () => {
-      actions.push({ table, action: "delete" });
-      chain._result = { data: null, error: null };
-      return chain;
-    };
-    chain.single = async () => {
-      if (table === "professional_profiles") {
-        return options.profile ?? { data: PROFILE, error: null };
-      }
-      return chain._result ?? { data: { id: "feed_posts-1" }, error: null };
-    };
-    chain.maybeSingle = async () => chain._result ?? { data: null, error: null };
-    chain.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-      Promise.resolve(chain._result ?? { data: null, error: null }).then(resolve, reject);
-    return chain;
-  });
-}
-
-function inserts(table: string): Array<Record<string, unknown>> {
-  return actions
-    .filter((action) => action.table === table && action.action === "insert")
-    .map((action) => action.payload as Record<string, unknown>);
+/** Bodies sent to `POST /v1/posts`. */
+function postBodies(): Array<Record<string, unknown>> {
+  return mocks.apiPost.mock.calls
+    .filter(([path]) => path === "/v1/posts")
+    .map(([, options]) => (options as { body: Record<string, unknown> }).body);
 }
 
 beforeEach(() => {
   Object.values(mocks).forEach((value) => {
     if (typeof value === "function" && "mockReset" in value) value.mockReset();
   });
-  mocks.supabase.from.mockReset();
-  mocks.supabase.auth.getUser.mockReset();
   mocks.deleteMedia.mockResolvedValue(undefined);
   mocks.resolveVideoMime.mockReturnValue("video/mp4");
   mocks.uploadMedia.mockResolvedValue(POSTER_MEDIA);
   mocks.prepareVideo.mockResolvedValue(PREPARED);
   mocks.posterAsset.mockReturnValue({ uri: "blob:poster" });
   mocks.uploadVideo.mockResolvedValue(CLOUDINARY_VIDEO);
-  installSupabase({});
+  mocks.fetchAccount.mockResolvedValue(ACCOUNT);
+  mocks.apiPost.mockResolvedValue({ id: "post-1" });
 });
 
 const baseInput = {
@@ -182,36 +135,27 @@ describe("publishing a video post", () => {
       purpose: "post",
     });
 
-    // ...and the post row carries the clip metadata.
-    const [post] = inserts("feed_posts");
-    expect(post).toMatchObject({
-      professional_id: "prof-1",
-      interest_id: "interest-1",
-      image_url: "https://cdn.test/post/poster-media/original.webp",
-      caption: "Fresh knotless braids",
-      price_from: 100,
-      aspect_ratio: 0.5625,
-      video_url: CLOUDINARY_VIDEO.url,
-      video_duration_ms: 8400,
-    });
+    // ...and the post is built from the two upload ids.
+    expect(postBodies()).toEqual([
+      {
+        caption: "Fresh knotless braids",
+        interest_id: "interest-1",
+        price_from: 100,
+        service_id: null,
+        video: { clip_media_id: "media-1", poster_media_id: "poster-media" },
+      },
+    ]);
     expect(onProgress).toHaveBeenCalledWith(1, "video");
     expect(onProgress).toHaveBeenCalledWith(1, "saving");
   });
 
-  it("never inserts feed_post_images for a clip", async () => {
-    await publishFeedPost({ ...baseInput, video: PREPARED.file });
-    expect(inserts("feed_post_images")).toHaveLength(0);
-  });
+  it("refuses before any upload when the business profile is unfinished", async () => {
+    mocks.fetchAccount.mockResolvedValue({ ...ACCOUNT, onboarding_completed: false });
 
-  it("clamps the aspect ratio to the product bounds", async () => {
-    mocks.prepareVideo.mockResolvedValue({
-      ...PREPARED,
-      clip: { ...PREPARED.clip, width: 400, height: 2000 }, // 0.2 → clamped to 0.4
-    });
-
-    await publishFeedPost({ ...baseInput, video: PREPARED.file });
-
-    expect(inserts("feed_posts")[0].aspect_ratio).toBe(0.4);
+    await expect(publishFeedPost({ ...baseInput, video: PREPARED.file })).rejects.toThrow(
+      /finish your business profile/i,
+    );
+    expect(mocks.uploadMedia).not.toHaveBeenCalled();
   });
 
   it("rejects a post containing both pictures and a clip", async () => {
@@ -247,7 +191,7 @@ describe("rollback", () => {
     );
 
     expect(mocks.uploadVideo).not.toHaveBeenCalled();
-    expect(inserts("feed_posts")).toHaveLength(0);
+    expect(postBodies()).toHaveLength(0);
   });
 
   it("deletes the poster when the Cloudinary upload fails", async () => {
@@ -258,13 +202,11 @@ describe("rollback", () => {
     );
 
     expect(mocks.deleteMedia).toHaveBeenCalledWith(POSTER_MEDIA);
-    expect(inserts("feed_posts")).toHaveLength(0);
+    expect(postBodies()).toHaveLength(0);
   });
 
-  it("deletes the clip and the poster when the post insert fails", async () => {
-    installSupabase({
-      insertResults: { feed_posts: { data: null, error: { message: "insert failed" } } },
-    });
+  it("deletes the clip and the poster when creating the post fails", async () => {
+    mocks.apiPost.mockRejectedValue(new Error("insert failed"));
 
     await expect(publishFeedPost({ ...baseInput, video: PREPARED.file })).rejects.toMatchObject({
       message: "insert failed",
@@ -288,7 +230,11 @@ describe("rollback", () => {
 });
 
 describe("publishing a picture post", () => {
-  it("inserts the post and its attachments", async () => {
+  it("creates the post from the picture upload ids, in order", async () => {
+    mocks.uploadMedia
+      .mockResolvedValueOnce({ ...POSTER_MEDIA, mediaId: "pic-1" })
+      .mockResolvedValueOnce({ ...POSTER_MEDIA, mediaId: "pic-2" });
+
     await publishFeedPost({
       ...baseInput,
       assets: [
@@ -298,32 +244,28 @@ describe("publishing a picture post", () => {
     });
 
     expect(mocks.uploadMedia).toHaveBeenCalledTimes(2);
-    const [post] = inserts("feed_posts");
-    expect(post).toMatchObject({ image_url: `https://cdn.test/${POSTER_MEDIA.bucketKey}` });
-    const imageBatches = inserts("feed_post_images");
-    expect(imageBatches).toHaveLength(1);
-    const images = imageBatches[0] as unknown as Array<Record<string, unknown>>;
-    expect(images).toHaveLength(2);
-    expect(images[0]).toMatchObject({ post_id: "feed_posts-1", sort_order: 0 });
+    expect(postBodies()).toEqual([
+      {
+        caption: "Fresh knotless braids",
+        interest_id: "interest-1",
+        price_from: 100,
+        service_id: null,
+        image_media_ids: ["pic-1", "pic-2"],
+      },
+    ]);
+    expect(mocks.invalidateFeedQueries).toHaveBeenCalled();
   });
 
-  it("removes the post row when attachments fail", async () => {
-    installSupabase({
-      insertResults: {
-        feed_post_images: { data: null, error: { message: "attachment failed" } },
-      },
-    });
+  it("deletes the uploaded pictures when creating the post fails", async () => {
+    mocks.apiPost.mockRejectedValue(new Error("post failed"));
 
     await expect(
       publishFeedPost({
         ...baseInput,
         assets: [{ uri: "blob:a", width: 1000, height: 1250 }],
       }),
-    ).rejects.toMatchObject({ message: "attachment failed" });
+    ).rejects.toMatchObject({ message: "post failed" });
 
-    expect(
-      actions.some((action) => action.table === "feed_posts" && action.action === "delete"),
-    ).toBe(true);
     expect(mocks.deleteMedia).toHaveBeenCalledWith(POSTER_MEDIA);
   });
 

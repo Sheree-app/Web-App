@@ -1,11 +1,9 @@
 import {
   deleteMedia,
-  feedUrl,
   uploadMedia,
   type UploadedMedia,
   type UploadedVideo,
 } from '@/lib/media';
-import { identifyMedia } from '@/lib/media/urls';
 import {
   MAX_VIDEO_BYTES,
   posterAsset,
@@ -15,8 +13,18 @@ import {
   VideoValidationError,
   VIDEO_MESSAGES,
 } from '@/lib/media/video';
-import { supabase } from '@/lib/supabase';
+import { fetchAccount } from '@/features/auth/api';
+import { fetchExploreCategories } from '@/features/explore/api';
+import { api, type Page } from '@/lib/api';
+import { AppError, errorCode } from '@/lib/errors';
 import { invalidateFeedQueries } from './api';
+
+/**
+ * Posting and the portfolio through the Sheree API (`sheree-backend/docs/api/feed.md`,
+ * `profiles.md`). Uploads go straight to storage (`@/lib/media`); the API then
+ * builds the post or studio photo from the upload ids and cleans the uploads up
+ * when a post or photo is deleted.
+ */
 
 export type PostCategory={id:string;name:string};
 export type ProfessionalPost={id:string;imageUrl:string;videoUrl:string|null;caption:string;createdAt:string};
@@ -30,9 +38,8 @@ const MAX_POST_IMAGES=8;
 export type PublishStage = 'preparing-video'|'poster'|'image'|'video'|'saving';
 
 export async function getPostCategories():Promise<PostCategory[]> {
-  const {data,error}=await supabase.from('interests').select('id,name').order('name');
-  if(error) throw error;
-  return data??[];
+  // Active categories, A to Z for the picker.
+  return(await fetchExploreCategories()).map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name));
 }
 
 type UploadAsset={uri:string;mimeType?:string|null;fileName?:string|null;width:number;height:number;file?:Blob};
@@ -54,57 +61,20 @@ export function clampFeedAspectRatio(value:number,fallback=0.82):number{
   return Math.min(MAX_ASPECT_RATIO,Math.max(MIN_ASPECT_RATIO,value));
 }
 
-function aspectOf(width:number,height:number):number{
-  if(!width||!height) return 0.82;
-  return clampFeedAspectRatio(width/height);
+/**
+ * "Complete enough to publish": a professional profile with a name and finished
+ * onboarding. The API only requires the profile, so the rest is checked here.
+ */
+async function ensureCanPublish(){
+  const account=await fetchAccount();
+  const profile=account.professional;
+  if(!profile||!profile.business_name?.trim()||!account.onboarding_completed){
+    throw new AppError('Finish your business profile before posting.');
+  }
 }
 
-type OwnedProfileRow={
-  id:string;
-  business_name?:string|null;
-  onboarding_completed_at?:string|null;
-  deleted_at?:string|null;
-};
-
-async function resolveProfessionalProfile(){
-  const {data:{user}}=await supabase.auth.getUser();
-  if(!user) throw new Error('Sign in again to publish your work.');
-
-  const full=await supabase
-    .from('professional_profiles')
-    .select('id,business_name,onboarding_completed_at,deleted_at' as never)
-    .eq('user_id',user.id)
-    .single();
-
-  let profile=full.data as unknown as OwnedProfileRow|null;
-  let completenessVerified=true;
-
-  if(full.error||!profile){
-    // Older deployments may not grant SELECT on the onboarding columns yet.
-    // Fall back to the ownership check (the Edge Function still requires a
-    // professional profile) rather than blocking publishing on a grant.
-    const minimal=await supabase
-      .from('professional_profiles')
-      .select('id,business_name' as never)
-      .eq('user_id',user.id)
-      .single();
-    if(minimal.error||!minimal.data){
-      throw new Error('Finish your business profile before posting.');
-    }
-    profile=minimal.data as unknown as OwnedProfileRow;
-    completenessVerified=false;
-  }
-
-  // "Complete enough to publish": a live business profile with a name.
-  if(profile.deleted_at) throw new Error('Finish your business profile before posting.');
-  if(
-    completenessVerified &&
-    (!profile.business_name?.trim()||!profile.onboarding_completed_at)
-  ){
-    throw new Error('Finish your business profile before posting.');
-  }
-  return profile;
-}
+const notAProfessional=(error:unknown,message='Your business profile could not be found.')=>
+  errorCode(error)==='not_a_professional'?new AppError(message):error;
 
 /** Best-effort removal of a clip that never became part of a post. */
 async function cleanupVideoClip(video:UploadedVideo|null){
@@ -126,8 +96,8 @@ async function cleanupPoster(poster:UploadedMedia|null){
  *   2. upload the poster through the ordinary image pipeline
  *   3. request a signed Cloudinary ticket
  *   4. POST the clip straight to Cloudinary
- *   5. confirm with `media-storage`
- *   6. insert `feed_posts` (no `feed_post_images` row for clips)
+ *   5. confirm with `/v1/media`
+ *   6. `POST /v1/posts` with the clip and poster upload ids
  *
  * Every failure rolls back what was already uploaded. Cleanup is best-effort
  * but never replaces the original error.
@@ -155,10 +125,10 @@ export async function publishFeedPost(
     if(videoFile.size>MAX_VIDEO_BYTES) throw new VideoValidationError(VIDEO_MESSAGES.tooLarge);
   }
 
-  const profile=await resolveProfessionalProfile();
+  await ensureCanPublish();
   const caption=input.caption.trim();
 
-  if(videoFile) return publishVideoPost({...input,assets:[],video:videoFile,caption},profile,onProgress);
+  if(videoFile) return publishVideoPost({...input,assets:[],video:videoFile,caption},onProgress);
 
   const uploaded:Array<{media:UploadedMedia;width:number;height:number}>=[];
   try{
@@ -169,47 +139,31 @@ export async function publishFeedPost(
       uploaded.push({media,width:asset.width,height:asset.height});
       onProgress?.(index+1,'image');
     }
-    const cover=uploaded[0];
-    const {data:post,error:postError}=await supabase.from('feed_posts').insert({
-      professional_id:profile.id,
-      interest_id:input.interestId,
-      image_url:feedUrl(cover.media),
+    // The server builds the post from the upload ids: the cover (first
+    // picture), its aspect ratio (clamped to .4–2) and the picture list.
+    await api.post('/v1/posts',{body:{
       caption,
+      interest_id:input.interestId,
       price_from:input.priceFrom,
       service_id:input.serviceId??null,
-      aspect_ratio:aspectOf(cover.width,cover.height),
-    } as never).select('id').single();
-    if(postError)throw postError;
-
-    const {error:imageError}=await (supabase.from('feed_post_images' as never) as any).insert(uploaded.map((item,index)=>({
-      post_id:post.id,
-      image_url:feedUrl(item.media),
-      aspect_ratio:aspectOf(item.width,item.height),
-      sort_order:index,
-    })));
-    if(imageError){
-      // The post exists without its attachments: remove it before surfacing.
-      await supabase.from('feed_posts').delete().eq('id',post.id);
-      throw imageError;
-    }
+      image_media_ids:uploaded.map(item=>item.media.mediaId),
+    }});
 
     invalidateFeedQueries();
   }catch(error){
     await Promise.allSettled(uploaded.map(item=>deleteMedia(item.media).catch(()=>undefined)));
-    throw error;
+    throw notAProfessional(error,'Finish your business profile before posting.');
   }
 }
 
 async function publishVideoPost(
   input:PublishPostInput&{video:File},
-  profile:{id:string},
   onProgress?:(completed:number,stage?:PublishStage)=>void,
 ){
   onProgress?.(0,'preparing-video');
 
   // 1. Validate the real duration and capture the poster — nothing uploaded yet.
   const prepared=await prepareVideo(input.video);
-  const aspectRatio=clampFeedAspectRatio(prepared.clip.width/prepared.clip.height);
 
   let poster:UploadedMedia|null=null;
   let video:UploadedVideo|null=null;
@@ -223,20 +177,16 @@ async function publishVideoPost(
     // 3–5. Signed ticket → direct Cloudinary upload → confirmation.
     video=await uploadVideo(prepared.file,prepared.clip,{purpose:'post'});
 
-    // 6. Persist the post. Clips never get `feed_post_images` rows.
+    // 6. Persist the post. The server sets the cover's aspect ratio.
     onProgress?.(1,'saving');
-    const {error:postError}=await supabase.from('feed_posts').insert({
-      professional_id:profile.id,
-      interest_id:input.interestId,
-      image_url:feedUrl(poster),
+    if(!poster.mediaId||!video.mediaId) throw new AppError('The upload could not be saved. Please try again.');
+    await api.post('/v1/posts',{body:{
       caption:input.caption.trim(),
+      interest_id:input.interestId,
       price_from:input.priceFrom,
       service_id:input.serviceId??null,
-      aspect_ratio:aspectRatio,
-      video_url:video.url,
-      video_duration_ms:video.durationMs,
-    } as never).select('id').single();
-    if(postError)throw postError;
+      video:{clip_media_id:video.mediaId,poster_media_id:poster.mediaId},
+    }});
 
     invalidateFeedQueries();
   }catch(error){
@@ -245,26 +195,28 @@ async function publishVideoPost(
       cleanupVideoClip(video),
       cleanupPoster(poster),
     ]);
-    throw error;
+    throw notAProfessional(error,'Finish your business profile before posting.');
   }
 }
 
-async function getOwnProfessionalId(){
-  const {data:{user}}=await supabase.auth.getUser();
-  if(!user) throw new Error('Sign in again to manage your posts.');
-  const {data,error}=await supabase.from('professional_profiles').select('id').eq('user_id',user.id).single();
-  if(error||!data) throw new Error('Your business profile could not be found.');
-  return data.id;
-}
+type OwnPostRow={id:string;image_url:string;caption:string|null;created_at:string;video_url:string|null};
+const OWN_POSTS_PAGE_SIZE=100;
+const OWN_POSTS_MAX_PAGES=20;
 
+/** Every post of the signed-in professional, newest first. */
 export async function getProfessionalPosts():Promise<ProfessionalPost[]>{
-  const professionalId=await getOwnProfessionalId();
-  const {data,error}=await (supabase.from('feed_posts' as never) as any)
-    .select('id,image_url,video_url,caption,created_at')
-    .eq('professional_id',professionalId)
-    .order('created_at',{ascending:false});
-  if(error) throw error;
-  return ((data??[]) as Array<{id:string;image_url:string;video_url:string|null;caption:string|null;created_at:string}>).map(post=>({
+  const rows:OwnPostRow[]=[];
+  let cursor:string|null=null;
+  try{
+    // The portfolio shows everything at once, so walk the pages (bounded).
+    for(let page=0;page<OWN_POSTS_MAX_PAGES;page+=1){
+      const result:Page<OwnPostRow>=await api.get<Page<OwnPostRow>>('/v1/me/posts',{query:{cursor:cursor??undefined,page_size:OWN_POSTS_PAGE_SIZE}});
+      rows.push(...result.items);
+      cursor=result.next_cursor;
+      if(!cursor) break;
+    }
+  }catch(error){throw notAProfessional(error)}
+  return rows.map(post=>({
     id:post.id,
     imageUrl:post.image_url,
     videoUrl:post.video_url??null,
@@ -273,58 +225,30 @@ export async function getProfessionalPosts():Promise<ProfessionalPost[]>{
   }));
 }
 
-/**
- * Deletes a post, then cleans up every asset it referenced.
- *
- * The database is the source of truth: storage cleanup runs best-effort after
- * the row is gone, so a transient provider error can never keep a deleted post
- * visible. Cloudinary clips are identified by public id; R2 images by key.
- */
+/** The server deletes the post, then (best effort) its pictures and clip. */
 export async function deleteProfessionalPost(post:ProfessionalPost){
-  const professionalId=await getOwnProfessionalId();
-  const {data:imageRows}=await (supabase.from('feed_post_images' as never) as any)
-    .select('image_url')
-    .eq('post_id',post.id);
-  const urls=[
-    ...new Set([
-      post.imageUrl,
-      ...(post.videoUrl?[post.videoUrl]:[]),
-      ...((imageRows??[]) as Array<{image_url:string}>).map(row=>row.image_url),
-    ]),
-  ];
-
-  const {error}=await supabase.from('feed_posts').delete().eq('id',post.id).eq('professional_id',professionalId);
-  if(error) throw error;
-
-  const media=urls
-    .map(url=>identifyMedia(url))
-    .filter((item):item is NonNullable<typeof item>=>item!==null);
-  await Promise.allSettled(media.map(item=>deleteMedia(item).catch(()=>undefined)));
-
+  try{await api.delete<void>(`/v1/posts/${encodeURIComponent(post.id)}`)}catch(error){throw notAProfessional(error)}
   invalidateFeedQueries();
 }
 
+type StudioPhotoRow={id:string;image_url:string;aspect_ratio:number|string;created_at:string};
+const toStudioPhoto=(row:StudioPhotoRow):StudioPhoto=>({id:row.id,imageUrl:row.image_url,aspectRatio:Number(row.aspect_ratio),createdAt:row.created_at});
+
 export async function getStudioPhotos():Promise<StudioPhoto[]>{
-  const professionalId=await getOwnProfessionalId();
-  const {data,error}=await supabase.from('professional_studio_photos' as never).select('id,image_url,aspect_ratio,created_at').eq('professional_id',professionalId).order('sort_order').order('created_at');
-  if(error)throw error;
-  return ((data??[]) as unknown as Array<{id:string;image_url:string;aspect_ratio:number|string;created_at:string}>).map(row=>({id:row.id,imageUrl:row.image_url,aspectRatio:Number(row.aspect_ratio),createdAt:row.created_at}));
+  try{return(await api.get<StudioPhotoRow[]>('/v1/me/studio-photos')).map(toStudioPhoto)}catch(error){throw notAProfessional(error)}
 }
 
 export async function addStudioPhoto(asset:UploadAsset){
-  const professionalId=await getOwnProfessionalId();
   const media=await uploadMedia('portfolio',asset);
-  const imageUrl=feedUrl(media);
-  const {data,error}=await supabase.from('professional_studio_photos' as never).insert({professional_id:professionalId,image_url:imageUrl,aspect_ratio:asset.width/asset.height} as never).select('id,image_url,aspect_ratio,created_at').single();
-  if(error){await deleteMedia(media).catch(()=>undefined);throw error}
-  const row=data as unknown as{id:string;image_url:string;aspect_ratio:number|string;created_at:string};
-  return{id:row.id,imageUrl:row.image_url,aspectRatio:Number(row.aspect_ratio),createdAt:row.created_at};
+  try{
+    return toStudioPhoto(await api.post<StudioPhotoRow>('/v1/me/studio-photos',{body:{media_id:media.mediaId}}));
+  }catch(error){
+    await deleteMedia(media).catch(()=>undefined);
+    throw notAProfessional(error);
+  }
 }
 
+/** The server deletes the photo, then (best effort) its upload. */
 export async function deleteStudioPhoto(photo:StudioPhoto){
-  const professionalId=await getOwnProfessionalId();
-  const {error}=await supabase.from('professional_studio_photos' as never).delete().eq('id',photo.id).eq('professional_id',professionalId);
-  if(error)throw error;
-  const media=identifyMedia(photo.imageUrl);
-  if(media)await deleteMedia(media).catch(()=>undefined);
+  try{await api.delete<void>(`/v1/me/studio-photos/${encodeURIComponent(photo.id)}`)}catch(error){throw notAProfessional(error)}
 }

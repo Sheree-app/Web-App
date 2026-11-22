@@ -1,5 +1,6 @@
 "use client";
 
+import { userMessage } from "@/lib/errors";
 import {
   Button,
   Card,
@@ -112,7 +113,7 @@ export default function PayoutAccountPage() {
       setAccountNumber("");
       setSaved(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Those details couldn’t be saved.");
+      setError(userMessage(cause, "Those details couldn’t be saved."));
     } finally {
       setSaving(false);
     }

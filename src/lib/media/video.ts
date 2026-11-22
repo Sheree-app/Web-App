@@ -1,4 +1,5 @@
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
+import { errorCode, userMessage } from "@/lib/errors";
 import type {
   MediaAsset,
   MediaPurpose,
@@ -14,15 +15,26 @@ import { cloudinaryPublicId } from "./video-urls";
  * Feed clips, ported from the mobile `src/lib/media/video.ts`.
  *
  * Videos are the one media type that does not go through R2: the browser asks
- * the `media-storage` Edge Function for a signed Cloudinary ticket, posts the
+ * the API (`POST /v1/media/uploads`) for a signed Cloudinary ticket, posts the
  * bytes straight to Cloudinary, then confirms the upload so a `media` row is
- * written. The Cloudinary API secret never leaves the Edge Function.
+ * written. The Cloudinary API secret never leaves the server.
  *
  * The poster frame is not a special medium either — it is captured locally and
  * pushed through the exact same image pipeline as a normal post picture.
  */
 
-const FUNCTION_NAME = "media-storage";
+/** Copy we wrote for a failed media API call; server text is never shown raw. */
+function apiFailure(error: unknown, fallback: string): VideoUploadError {
+  switch (errorCode(error)) {
+    case "business_profile_required":
+      return new VideoUploadError("Finish setting up your professional profile before uploading.");
+    case "rate_limited":
+      return new VideoUploadError("You've uploaded a lot in the last hour. Please try again later.");
+    case "upload_rejected":
+      return new VideoUploadError("That clip couldn't be used. Try a different one.");
+  }
+  return new VideoUploadError(userMessage(error, fallback, "media.video"));
+}
 
 // ---------------------------------------------------------------------------
 // Limits — kept in sync with the Edge Function and `feed_posts_video_check`.
@@ -494,24 +506,24 @@ function normalizeTicket(data: unknown): VideoUploadTicket {
   };
 }
 
-/** Requests the signed ticket from the existing `media-storage` function. */
+/** Requests the signed Cloudinary ticket from `POST /v1/media/uploads`. */
 export async function requestVideoUploadTicket(
   clip: VideoClipMeta,
   options: { purpose?: MediaPurpose; signal?: AbortSignal } = {},
 ): Promise<VideoUploadTicket> {
-  const { data, error } = await supabase.functions.invoke(FUNCTION_NAME, {
-    body: {
-      action: "create-upload",
-      kind: "video",
-      provider: "cloudinary",
-      purpose: options.purpose ?? "post",
-      clip,
-    },
-  });
-  if (error) {
-    throw new VideoUploadError(
-      error.message || "Video uploads are unavailable. Please try again shortly.",
-    );
+  let data: unknown;
+  try {
+    data = await api.post<unknown>("/v1/media/uploads", {
+      body: {
+        kind: "video",
+        provider: "cloudinary",
+        purpose: options.purpose ?? "post",
+        clip,
+      },
+      signal: options.signal,
+    });
+  } catch (error) {
+    throw apiFailure(error, "Video uploads are unavailable. Please try again shortly.");
   }
   return normalizeTicket(data);
 }
@@ -619,21 +631,22 @@ export async function completeVideoUpload(
   ticket: VideoUploadTicket,
   clip: VideoClipMeta,
 ): Promise<{ mediaId: string; publicId: string }> {
-  const { data, error } = await supabase.functions.invoke(FUNCTION_NAME, {
-    body: {
-      action: "complete",
-      kind: "video",
-      provider: "cloudinary",
-      purpose: ticket.purpose,
-      mediaId: ticket.mediaId,
-      publicId: ticket.publicId,
-      clip,
-    },
-  });
-  if (error) {
-    throw new VideoUploadError(
-      error.message || "The clip uploaded but could not be saved. Please try again.",
+  let data: unknown;
+  try {
+    data = await api.post<unknown>(
+      `/v1/media/uploads/${encodeURIComponent(ticket.mediaId)}/complete`,
+      {
+        body: {
+          kind: "video",
+          provider: "cloudinary",
+          purpose: ticket.purpose,
+          publicId: ticket.publicId,
+          clip,
+        },
+      },
     );
+  } catch (error) {
+    throw apiFailure(error, "The clip uploaded but could not be saved. Please try again.");
   }
   const media = (data as { media?: { id?: string; bucket_key?: string } } | null)?.media;
   return {
@@ -693,7 +706,7 @@ export async function uploadVideo(
   }
 }
 
-/** Best-effort removal of a Cloudinary clip through `media-storage`. */
+/** Best-effort removal of a Cloudinary clip through `POST /v1/media/deletions`. */
 export async function deleteCloudinaryVideo(
   target: string | { publicId?: string | null; url?: string | null },
 ): Promise<void> {
@@ -703,8 +716,9 @@ export async function deleteCloudinaryVideo(
       : target.publicId || (target.url ? cloudinaryPublicId(target.url) : null);
   if (!publicId) return;
 
-  const { error } = await supabase.functions.invoke(FUNCTION_NAME, {
-    body: { action: "delete", provider: "cloudinary", publicId },
-  });
-  if (error) throw new VideoUploadError(error.message || "That clip could not be removed.");
+  try {
+    await api.post<void>("/v1/media/deletions", { body: { provider: "cloudinary", publicId } });
+  } catch {
+    throw new VideoUploadError("That clip could not be removed.");
+  }
 }
