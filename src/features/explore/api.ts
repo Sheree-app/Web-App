@@ -1,7 +1,7 @@
 import { api } from '@/lib/api';
 import type { Category,Professional } from './data';
 import {categoryImages} from './category-images';
-import {cachedQuery} from '@/lib/query-cache';
+import {cachedQuery,STALE} from '@/lib/query-cache';
 
 /**
  * Explore reads from the Sheree API (`sheree-backend/docs/api/discovery.md`).
@@ -15,8 +15,22 @@ type CategoryRow={id:string;name:string;slug:string;image_url:string|null};
 const toProfessional=(row:ExploreRow,distance=0):Professional=>({id:row.id,name:row.name,category:row.category,location:row.location,distance,rating:Number(row.rating),reviews:Number(row.reviews),price:Number(row.price),available:row.available,verified:row.verified,image:row.image??'',new:row.is_new});
 const toPinned=(row:NearbyRow):Professional=>({...toProfessional(row,row.distance_metres),latitude:row.latitude,longitude:row.longitude});
 
+/** Cache keys (public data: the same for everyone). */
+export const EXPLORE_PROS_KEY='pub:explore:pros:30';
+export const CATEGORIES_KEY='pub:categories';
+export const categoryProsKey=(slug:string)=>`pub:explore:category:${slug}`;
+// Positions are rounded to ~1 km so small GPS jitter reuses the cached answer.
+const place=(latitude:number,longitude:number)=>`${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+export const mapProsKey=(latitude:number,longitude:number,resultLimit=500)=>`pub:explore:map:${place(latitude,longitude)}:${resultLimit}`;
+export const nearbyProsKey=(latitude:number,longitude:number,radiusMetres=400,resultLimit=20)=>`pub:explore:nearby:${place(latitude,longitude)}:${radiusMetres}:${resultLimit}`;
+
+/** `GET /v1/explore/professionals`; always a network read (see `useExploreProfessionals`). */
+export async function loadExploreProfessionals():Promise<Professional[]>{
+  return(await api.get<ExploreRow[]>('/v1/explore/professionals',{auth:'optional',query:{limit:30}})).map(row=>toProfessional(row));
+}
+
 export async function fetchExploreProfessionals():Promise<Professional[]>{
-  return cachedQuery('public-explore:30',60_000,async()=>(await api.get<ExploreRow[]>('/v1/explore/professionals',{auth:'optional',query:{limit:30}})).map(row=>toProfessional(row)));
+  return cachedQuery(EXPLORE_PROS_KEY,STALE.medium,loadExploreProfessionals);
 }
 
 export async function fetchNearbyProfessionals(latitude:number,longitude:number,radiusMetres=400,resultLimit=20):Promise<Professional[]>{
@@ -39,6 +53,11 @@ export async function fetchProfessionalsByCategory(slug:string):Promise<Professi
 }
 
 const categoryColors=['#F2D8DE','#E6DCEB','#D8E4DC','#EAD9CF','#E8DDE2','#E7E0D5'];
+/** `GET /v1/categories`; always a network read (see `useExploreCategories`). */
+export async function loadExploreCategories():Promise<Category[]>{
+  return(await api.get<CategoryRow[]>('/v1/categories',{auth:'optional'})).map((row,index)=>({id:row.id,name:row.name,slug:row.slug,image:categoryImages[row.slug]??row.image_url,blush:categoryColors[index%categoryColors.length]}));
+}
+
 export async function fetchExploreCategories():Promise<Category[]>{
-  return cachedQuery('public-categories',10*60_000,async()=>(await api.get<CategoryRow[]>('/v1/categories',{auth:'optional'})).map((row,index)=>({id:row.id,name:row.name,slug:row.slug,image:categoryImages[row.slug]??row.image_url,blush:categoryColors[index%categoryColors.length]})));
+  return cachedQuery(CATEGORIES_KEY,STALE.long,loadExploreCategories);
 }

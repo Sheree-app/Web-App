@@ -2,14 +2,15 @@
 import { usePricing } from "@/providers/pricing-provider";
 
 import { FormError, Sheet, Skeleton } from "@/components/ui";
-import { fetchPayoutAccount } from "@/features/account/payoutApi";
+import { usePayoutAccount } from "@/features/account/payoutQueries";
 import {
-  fetchOwnServices,
-  fetchServiceCategories,
+  OWN_SERVICES_KEY,
   saveProfessionalService,
   uploadServicePhoto,
   type ServiceCategory,
 } from "@/features/services/api";
+import { useOwnServices, useServiceCategories } from "@/features/services/queries";
+import { updateQueryData } from "@/lib/use-query";
 import { DEPOSIT_PERCENT, duration, type Service } from "@/features/services/data";
 import { useToast } from "@/providers/toast-provider";
 import {
@@ -22,7 +23,10 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const noServices: Service[] = [];
+const noCategories: ServiceCategory[] = [];
 
 type Draft = {
   id: string;
@@ -59,41 +63,32 @@ export default function StudioServicesPage() {
   const { money, customerPrice, config } = usePricing();
   const { toast, error: showError } = useToast();
 
-  const [items, setItems] = useState<Service[]>([]);
-  const [profileId, setProfileId] = useState<string | null>(null);
-  const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cached: a revisit paints the menu at once and refreshes behind it.
+  const own = useOwnServices();
+  const categoriesQuery = useServiceCategories();
+  const payout = usePayoutAccount();
+  const items = own.data?.services ?? noServices;
+  const profileId = own.data?.profileId ?? null;
+  const categories = categoriesQuery.data ?? noCategories;
+  const loading = own.isLoading || categoriesQuery.isLoading;
+  // An account that can't be read counts as not ready, as before.
+  const payoutReady = payout.data ? payout.data.configured : payout.error ? false : null;
+  const payoutRequired = own.data ? own.data.countryCode === "GH" : true;
   const [saving, setSaving] = useState(false);
-  const [payoutReady, setPayoutReady] = useState<boolean | null>(null);
-  const [payoutRequired, setPayoutRequired] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [formError, setFormError] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const [{ profileId: id, countryCode, services }, availableCategories] = await Promise.all([
-        fetchOwnServices(),
-        fetchServiceCategories(),
-      ]);
-      setProfileId(id);
-      setPayoutRequired(countryCode === "GH");
-      setItems(services);
-      setCategories(availableCategories);
-      const account = await fetchPayoutAccount().catch(() => null);
-      setPayoutReady(Boolean(account?.configured));
-    } catch (cause) {
-      showError(
-        "Services could not load",
-        cause instanceof Error ? cause.message : "Check your connection and try again.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [showError]);
-
+  // Only a load with nothing cached to show is worth a toast.
+  const loadError =
+    (own.error && !own.data ? own.error : null) ??
+    (categoriesQuery.error && !categoriesQuery.data ? categoriesQuery.error : null);
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!loadError) return;
+    showError(
+      "Services could not load",
+      loadError instanceof Error ? loadError.message : "Check your connection and try again.",
+    );
+  }, [loadError, showError]);
 
   const active = useMemo(() => items.filter((item) => item.active), [items]);
 
@@ -180,11 +175,14 @@ export default function StudioServicesPage() {
         image = await uploadServicePhoto(id, URL.createObjectURL(draft.photoFile), draft.photoFile.name);
       }
       const saved = { ...value, id, image };
-      setItems((current) =>
-        draft.id === "local-new"
-          ? [saved, ...current]
-          : current.map((item) => (item.id === draft.id ? saved : item)),
-      );
+      // Shown at once; the save also refetches the list and her public menu.
+      updateQueryData<{ services: Service[] }>(OWN_SERVICES_KEY, (current) => ({
+        ...current,
+        services:
+          draft.id === "local-new"
+            ? [saved, ...current.services]
+            : current.services.map((item) => (item.id === draft.id ? saved : item)),
+      }));
       setDraft(null);
       toast("Service saved", { tone: "success", detail: saved.name });
     } catch (cause) {

@@ -2,14 +2,17 @@
 
 import { CardSkeleton, RowSkeleton } from "@/components/ui";
 import { categoryImage } from "@/features/explore/category-images";
-import { fetchExploreCategories, fetchExploreProfessionals } from "@/features/explore/api";
+import { prefetchCategoryProfessionals, useExploreCategories, useExploreProfessionals } from "@/features/explore/queries";
 import type { Category, Professional } from "@/features/explore/data";
 import { ProfessionalTile } from "@/features/explore/ProfessionalTile";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useMemo } from "react";
+
+const EMPTY_PROS: Professional[] = [];
+const EMPTY_CATEGORIES: Category[] = [];
 
 /**
  * The "See all" destination from Explore, matching `explore-all` on mobile:
@@ -21,18 +24,13 @@ function ExploreAll() {
   const searchParams = useSearchParams();
   const section = searchParams.get("section") ?? "trending";
 
-  const [items, setItems] = useState<Professional[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    void Promise.all([fetchExploreProfessionals(), fetchExploreCategories()])
-      .then(([people, categoryRows]) => {
-        setItems(people);
-        setCategories(categoryRows);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  // Shared with Explore, so this usually paints from the cache at once.
+  const people = useExploreProfessionals();
+  const categoryQuery = useExploreCategories();
+  const items: Professional[] = people.data ?? EMPTY_PROS;
+  const categories: Category[] = categoryQuery.data ?? EMPTY_CATEGORIES;
+  // As before, a failed load just ends the skeleton.
+  const loading = section === "categories" ? categoryQuery.isLoading : people.isLoading;
 
   const list = useMemo(
     () => (section === "available" ? items.filter((item) => item.available) : items),
@@ -86,6 +84,9 @@ function ExploreAll() {
             <Link
               key={category.id}
               href={`/category/${category.slug}`}
+              onPointerEnter={() => prefetchCategoryProfessionals(category.slug)}
+              onFocus={() => prefetchCategoryProfessionals(category.slug)}
+              onTouchStart={() => prefetchCategoryProfessionals(category.slug)}
               className="flex h-[84px] items-center gap-4 overflow-hidden rounded-panel bg-surface pr-4"
             >
               <span className="relative h-full w-[92px] shrink-0 bg-secondary">

@@ -1,6 +1,7 @@
 import { api } from '@/lib/api';
 import { AppError, errorCode } from '@/lib/errors';
 import { deleteMedia, mediaAssetFromFile, uploadMedia } from '@/lib/media';
+import { invalidateCached, invalidateCachedPrefix } from '@/lib/query-cache';
 import { demoServices, type Service } from './data';
 
 /**
@@ -9,6 +10,20 @@ import { demoServices, type Service } from './data';
  * and are attached by upload id.
  */
 export type ServiceCategory={id:string;name:string};
+
+/** Cache keys (`useQuery`, `./queries.ts`). The own list is per signed-in pro. */
+export const OWN_SERVICES_KEY='me:services';
+export const publicServicesKey=(profileKey:string)=>`pub:services:${profileKey.trim()}`;
+export const publicProNameKey=(profileKey:string)=>`pub:pro-name:${profileKey.trim()}`;
+
+/**
+ * After a service changes: her own list, and every public view of her menu
+ * and profile (keyed by handle or id, so all `pub:` keys are marked stale).
+ */
+export function invalidateServiceQueries(){
+ invalidateCached(OWN_SERVICES_KEY);
+ invalidateCachedPrefix('pub:');
+}
 
 // Service cards always show a picture; one without a photo gets the demo image.
 const fallbackImage=demoServices[0].image;
@@ -72,13 +87,17 @@ export async function saveProfessionalService(_profileId:string,service:Service)
   ?api.post<OwnServiceRow>('/v1/me/services',{body:values})
   :api.patch<OwnServiceRow>(`/v1/me/services/${encodeURIComponent(service.id)}`,{body:values});
  try{
-  return(await save()).id;
+  const id=(await save()).id;
+  invalidateServiceQueries();
+  return id;
  }catch(error){
   // The web editor offers every category (as before the API); the server only
   // accepts the practice's, so add the chosen one and try once more.
   if(errorCode(error)==='category_not_in_practice'){
    await addProfessionalCategory(service.categoryId);
-   return(await save()).id;
+   const id=(await save()).id;
+   invalidateServiceQueries();
+   return id;
   }
   throw error;
  }
@@ -94,6 +113,7 @@ export async function uploadServicePhoto(serviceId:string,uri:string,name:string
  const media=await uploadMedia('service',asset);
  try{
   const saved=await api.put<OwnServiceRow>(`/v1/me/services/${encodeURIComponent(serviceId)}/photo`,{body:{media_id:media.mediaId}});
+  invalidateServiceQueries();
   return saved.image??fallbackImage;
  }catch(error){
   await deleteMedia(media).catch(()=>undefined);

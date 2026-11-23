@@ -1,52 +1,115 @@
+import { api } from "@/lib/api";
+import { SESSION_STORAGE_KEY } from "@/lib/api/browser-token-store";
+import { createQueryStore, type KeyValueStorage } from "./query-store";
+
 /**
- * Tiny in-memory response cache, ported from the mobile app's
- * `src/lib/query-cache.ts`. It de-duplicates in-flight requests and keeps hot
- * results (explore rails, categories, professionals) between route changes
- * without pulling a data-fetching library into the bundle.
+ * The app-wide data cache (see `query-store.ts` for how it behaves). Feature
+ * `api.ts` modules read and invalidate it through the helpers below; pages
+ * read it through `useQuery` (`@/lib/use-query`).
+ *
+ * It belongs to whoever is signed in: on start it restores what that person's
+ * last visit cached (instant first paint after a reload), and it is wiped on
+ * sign-out or when another account signs in, in this tab or another.
  */
-type Entry<T> = { value: T; expiresAt: number };
 
-const values = new Map<string, Entry<unknown>>();
-const requests = new Map<string, Promise<unknown>>();
-
-export function getCached<T>(key: string) {
-  const entry = values.get(key) as Entry<T> | undefined;
-  if (!entry || entry.expiresAt <= Date.now()) {
-    values.delete(key);
-    return undefined;
+const browserStorage: KeyValueStorage | null = (() => {
+  if (typeof window === "undefined") return null;
+  try {
+    const probe = "sheree:query-cache:probe";
+    window.localStorage.setItem(probe, "1");
+    window.localStorage.removeItem(probe);
+    return window.localStorage;
+  } catch {
+    return null;
   }
-  return entry.value;
+})();
+
+/** Things that must never sit in storage: money details and one-off flows. */
+const NEVER_PERSIST = [/^payout/, /^checkout/, /^booking-flow/];
+
+export const queryStore = createQueryStore({
+  storage: browserStorage,
+  shouldPersist: (key) => !NEVER_PERSIST.some((pattern) => pattern.test(key)),
+});
+
+/** The signed-in user id from the API client's storage, read synchronously. */
+function storedUserId(): string | null {
+  if (!browserStorage) return null;
+  try {
+    const raw = browserStorage.getItem(SESSION_STORAGE_KEY);
+    const id = raw ? (JSON.parse(raw) as { user?: { id?: unknown } }).user?.id : null;
+    return typeof id === "string" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+if (typeof window !== "undefined") {
+  // Restored before any component renders, so the first client render after
+  // hydration already has the last visit's data.
+  queryStore.restore(storedUserId());
+  api.session.subscribe((user) => {
+    const next = user?.id ?? null;
+    if (next !== queryStore.scope()) queryStore.clear(next);
+  });
+  // Don't lose the last few changes when the tab closes or is hidden.
+  window.addEventListener("pagehide", () => queryStore.persistNow());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") queryStore.persistNow();
+  });
+}
+
+/** Common freshness windows. Stale data still shows; it's refetched behind it. */
+export const STALE = {
+  /** Feeds, counts, notifications: change often. */
+  short: 30_000,
+  /** Profiles, lists of your own things. */
+  medium: 5 * 60_000,
+  /** Catalogue data: categories, service fee. */
+  long: 30 * 60_000,
+} as const;
+
+// ---- The original helpers, kept for the feature modules -------------------
+
+/** A fresh value, or undefined when missing or stale. */
+export function getCached<T>(key: string): T | undefined {
+  return queryStore.isFresh(key) ? queryStore.get<T>(key)?.value : undefined;
+}
+
+/** The value even if stale (for an instant paint while it refreshes). */
+export function peekCached<T>(key: string): T | undefined {
+  return queryStore.get<T>(key)?.value;
 }
 
 export function setCached<T>(key: string, value: T, ttlMs: number) {
-  values.set(key, { value, expiresAt: Date.now() + ttlMs });
-  return value;
+  return queryStore.set(key, value, ttlMs);
 }
 
-export async function cachedQuery<T>(key: string, ttlMs: number, query: () => Promise<T>): Promise<T> {
-  const cached = getCached<T>(key);
-  if (cached !== undefined) return cached;
-  const pending = requests.get(key) as Promise<T> | undefined;
-  if (pending) return pending;
-  const request = query()
-    .then((value) => setCached(key, value, ttlMs))
-    .finally(() => requests.delete(key));
-  requests.set(key, request);
-  return request;
+/** Returns a fresh cached value or fetches (sharing any running request). */
+export function cachedQuery<T>(
+  key: string,
+  ttlMs: number,
+  query: () => Promise<T>,
+  options?: { force?: boolean },
+): Promise<T> {
+  return queryStore.fetch(key, ttlMs, query, options);
 }
 
 export function updateCached<T>(key: string, update: (value: T) => T) {
-  const entry = values.get(key) as Entry<T> | undefined;
-  if (entry) entry.value = update(entry.value);
+  queryStore.update(key, update);
 }
 
+/** Marks `key` stale: it keeps showing and is refetched wherever it is used. */
 export function invalidateCached(key: string) {
-  values.delete(key);
+  queryStore.invalidate((k) => k === key);
 }
 
-/** Drops every entry whose key starts with `prefix` (e.g. all feed pages). */
+/** Marks every key starting with `prefix` stale (e.g. all feed pages). */
 export function invalidateCachedPrefix(prefix: string) {
-  for (const key of values.keys()) {
-    if (key.startsWith(prefix)) values.delete(key);
-  }
+  queryStore.invalidate((k) => k.startsWith(prefix));
+}
+
+/** Drops `key` entirely (the thing it described no longer exists). */
+export function removeCached(key: string) {
+  queryStore.remove((k) => k === key);
 }

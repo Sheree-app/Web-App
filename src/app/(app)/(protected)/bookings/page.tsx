@@ -6,7 +6,8 @@ import { formatMoney, bookingDueNow, toCedis } from "@/lib/pricing";
 import { Avatar, RowSkeleton, Sheet } from "@/components/ui";
 import { AppPromoStrip } from "@/features/app-promo/AppPromo";
 import { FoundingBadge } from "@/features/badges/FoundingBadge";
-import { cancelCustomerBooking, fetchCustomerBookings } from "@/features/booking/api";
+import { cancelCustomerBooking, type CustomerBooking } from "@/features/booking/api";
+import { useCustomerBookings } from "@/features/booking/queries";
 import { formatTime12 } from "@/features/booking/time-format";
 import { useToast } from "@/providers/toast-provider";
 import {
@@ -23,10 +24,12 @@ import {
   XCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-type Booking = Awaited<ReturnType<typeof fetchCustomerBookings>>["items"][number];
+type Booking = CustomerBooking;
 type Filter = "upcoming" | "past";
+
+const NO_BOOKINGS: Booking[] = [];
 
 const money = (value: number, currency: string) => formatMoney(value, currency);
 
@@ -89,11 +92,18 @@ export default function BookingsPage() {
   const router = useRouter();
   const { success, error: showError, toast } = useToast();
 
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  // Cached: a revisit paints at once and refreshes behind it. Cancelling (or
+  // any other booking change) invalidates it, which refetches it here.
+  const bookingsQuery = useCustomerBookings();
+  const bookings = bookingsQuery.data?.items ?? NO_BOOKINGS;
+  const loading = bookingsQuery.isLoading;
+  const error =
+    bookingsQuery.error && !bookingsQuery.data
+      ? "We couldn’t load your appointments. Check your connection and try again."
+      : null;
+  const load = bookingsQuery.refetch;
   const [filter, setFilter] = useState<Filter>("upcoming");
   const [selected, setSelected] = useState<Booking | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState("");
   const [confirmCancel, setConfirmCancel] = useState<Booking | null>(null);
   // A ticking clock, so "Upcoming" quietly moves lapsed appointments to history
@@ -106,22 +116,6 @@ export default function BookingsPage() {
     const timer = window.setInterval(tick, 60_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  const load = useCallback(async () => {
-    try {
-      const page = await fetchCustomerBookings(null, 30);
-      setBookings(page.items);
-      setError(null);
-    } catch {
-      setError("We couldn’t load your appointments. Check your connection and try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   // The app splits by time as well as status, so a lapsed booking never sits in
   // "Upcoming" waiting to be noticed.
@@ -145,6 +139,7 @@ export default function BookingsPage() {
     setCancelling(booking.id);
     try {
       const result = await cancelCustomerBooking(booking.id);
+      // The cancel invalidated the list; wait for the refreshed one.
       await load();
       setConfirmCancel(null);
       setSelected(null);

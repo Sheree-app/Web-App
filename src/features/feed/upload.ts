@@ -17,6 +17,7 @@ import { fetchAccount } from '@/features/auth/api';
 import { fetchExploreCategories } from '@/features/explore/api';
 import { api, type Page } from '@/lib/api';
 import { AppError, errorCode } from '@/lib/errors';
+import { invalidateCached, invalidateCachedPrefix } from '@/lib/query-cache';
 import { invalidateFeedQueries } from './api';
 
 /**
@@ -27,6 +28,24 @@ import { invalidateFeedQueries } from './api';
  */
 
 export type PostCategory={id:string;name:string};
+
+/** Cache keys (`useQuery`); the cache is per signed-in pro. */
+export const OWN_POSTS_KEY='me:posts';
+export const STUDIO_PHOTOS_KEY='me:studio-photos';
+export const POST_CATEGORIES_KEY='pub:post-categories';
+
+/** After a post changes: her own list, the feeds and every public profile view. */
+function invalidatePostQueries(){
+  invalidateFeedQueries();
+  invalidateCached(OWN_POSTS_KEY);
+  invalidateCachedPrefix('pub:');
+}
+
+/** After a studio photo changes: her own grid and every public profile view. */
+function invalidateStudioPhotoQueries(){
+  invalidateCached(STUDIO_PHOTOS_KEY);
+  invalidateCachedPrefix('pub:');
+}
 export type ProfessionalPost={id:string;imageUrl:string;videoUrl:string|null;caption:string;createdAt:string};
 export type StudioPhoto={id:string;imageUrl:string;aspectRatio:number;createdAt:string};
 
@@ -149,7 +168,7 @@ export async function publishFeedPost(
       image_media_ids:uploaded.map(item=>item.media.mediaId),
     }});
 
-    invalidateFeedQueries();
+    invalidatePostQueries();
   }catch(error){
     await Promise.allSettled(uploaded.map(item=>deleteMedia(item.media).catch(()=>undefined)));
     throw notAProfessional(error,'Finish your business profile before posting.');
@@ -188,7 +207,7 @@ async function publishVideoPost(
       video:{clip_media_id:video.mediaId,poster_media_id:poster.mediaId},
     }});
 
-    invalidateFeedQueries();
+    invalidatePostQueries();
   }catch(error){
     // Roll back in reverse order, then surface the original failure.
     await Promise.allSettled([
@@ -228,7 +247,7 @@ export async function getProfessionalPosts():Promise<ProfessionalPost[]>{
 /** The server deletes the post, then (best effort) its pictures and clip. */
 export async function deleteProfessionalPost(post:ProfessionalPost){
   try{await api.delete<void>(`/v1/posts/${encodeURIComponent(post.id)}`)}catch(error){throw notAProfessional(error)}
-  invalidateFeedQueries();
+  invalidatePostQueries();
 }
 
 type StudioPhotoRow={id:string;image_url:string;aspect_ratio:number|string;created_at:string};
@@ -241,7 +260,9 @@ export async function getStudioPhotos():Promise<StudioPhoto[]>{
 export async function addStudioPhoto(asset:UploadAsset){
   const media=await uploadMedia('portfolio',asset);
   try{
-    return toStudioPhoto(await api.post<StudioPhotoRow>('/v1/me/studio-photos',{body:{media_id:media.mediaId}}));
+    const photo=toStudioPhoto(await api.post<StudioPhotoRow>('/v1/me/studio-photos',{body:{media_id:media.mediaId}}));
+    invalidateStudioPhotoQueries();
+    return photo;
   }catch(error){
     await deleteMedia(media).catch(()=>undefined);
     throw notAProfessional(error);
@@ -251,4 +272,5 @@ export async function addStudioPhoto(asset:UploadAsset){
 /** The server deletes the photo, then (best effort) its upload. */
 export async function deleteStudioPhoto(photo:StudioPhoto){
   try{await api.delete<void>(`/v1/me/studio-photos/${encodeURIComponent(photo.id)}`)}catch(error){throw notAProfessional(error)}
+  invalidateStudioPhotoQueries();
 }

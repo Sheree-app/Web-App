@@ -6,14 +6,13 @@ import {
   BookingAvailabilityError,
   bookingAvailabilityAlert,
   fetchAvailability,
-  fetchBookingForReschedule,
   fetchBookingSlots,
   fetchCustomBookingSlots,
   rescheduleBooking,
   type AvailabilityDay,
   type BookingSlot,
-  type RescheduleBooking,
 } from "@/features/booking/api";
+import { useRescheduleBooking } from "@/features/booking/queries";
 import { cn, formatSlot } from "@/lib/utils";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -31,59 +30,61 @@ export default function ReschedulePage() {
   const params = useParams<{ bookingId: string }>();
   const bookingId = params.bookingId;
 
-  const [booking, setBooking] = useState<RescheduleBooking | null>(null);
+  // The booking itself is cached (a revisit paints at once); the calendar
+  // and the times are always read fresh, since they decide what's bookable.
+  const bookingQuery = useRescheduleBooking(bookingId);
+  const booking = bookingQuery.data ?? null;
   const [days, setDays] = useState<AvailabilityDay[]>([]);
+  const [daysLoaded, setDaysLoaded] = useState(false);
   const [slots, setSlots] = useState<BookingSlot[]>([]);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [notes, setNotes] = useState("");
-  const [loading, setLoading] = useState(true);
+  // null until she edits them: until then the booking's own notes show.
+  const [editedNotes, setNotes] = useState<string | null>(null);
+  const notes = editedNotes ?? booking?.notes ?? "";
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
+  const professionalId = booking?.professionalId ?? "";
+  const serviceId = booking?.serviceId ?? "";
   useEffect(() => {
+    if (!professionalId) return;
     let active = true;
-
-    fetchBookingForReschedule(bookingId)
-      .then(async (next) => {
-        if (!active) return;
-        setBooking(next);
-        setNotes(next.notes ?? "");
-        const calendar = (await fetchAvailability(
-          next.professionalId,
-          next.serviceId || null,
-          todayISO(),
-          DAY_COUNT,
-        )) as AvailabilityDay[];
-        if (!active) return;
-        setDays(calendar);
+    fetchAvailability(professionalId, serviceId || null, todayISO(), DAY_COUNT)
+      .then((calendar) => {
+        if (active) setDays(calendar as AvailabilityDay[]);
       })
       .catch((cause: unknown) => {
         if (active) setError(userMessage(cause, "This booking isn’t available."));
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setDaysLoaded(true);
       });
 
     return () => {
       active = false;
     };
-  }, [bookingId]);
+  }, [professionalId, serviceId]);
 
+  const loadError =
+    bookingQuery.error && !booking ? userMessage(bookingQuery.error, "This booking isn’t available.") : "";
+  const loading = bookingQuery.isLoading || (Boolean(booking) && !daysLoaded);
+
+  // A price-card booking has no catalogue service: its slots depend on its length.
+  // Plain values, so a background refresh of the booking doesn't reset her pick.
+  const minutes = booking ? Math.round((+new Date(booking.endsAt) - +new Date(booking.startsAt)) / 60_000) : 0;
   const loadSlots = useCallback(
     async (nextDate: string) => {
-      if (!booking) return;
+      if (!professionalId) return;
       setLoadingSlots(true);
       setTime("");
       try {
-        // A price-card booking has no catalogue service: its slots depend on its length.
-        const minutes = Math.round((+new Date(booking.endsAt) - +new Date(booking.startsAt)) / 60_000);
         setSlots(
-          booking.serviceId
-            ? await fetchBookingSlots(booking.professionalId, booking.serviceId, nextDate)
-            : await fetchCustomBookingSlots(booking.professionalId, minutes, nextDate),
+          serviceId
+            ? await fetchBookingSlots(professionalId, serviceId, nextDate)
+            : await fetchCustomBookingSlots(professionalId, minutes, nextDate),
         );
       } catch {
         setSlots([]);
@@ -91,12 +92,12 @@ export default function ReschedulePage() {
         setLoadingSlots(false);
       }
     },
-    [booking],
+    [minutes, professionalId, serviceId],
   );
 
   useEffect(() => {
-    if (date && booking) void loadSlots(date);
-  }, [booking, date, loadSlots]);
+    if (date) void loadSlots(date);
+  }, [date, loadSlots]);
 
   const submit = async () => {
     if (!booking || !date || !time) {
@@ -150,7 +151,7 @@ export default function ReschedulePage() {
     return (
       <div className="flex flex-col gap-4">
         <TopBar title="Reschedule" backTo="/bookings" />
-        <ErrorState message={error || "This booking isn’t available."} />
+        <ErrorState message={error || loadError || "This booking isn’t available."} />
       </div>
     );
   }

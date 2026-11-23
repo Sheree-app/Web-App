@@ -1,5 +1,6 @@
 import { api, isApiError, type Page } from "@/lib/api";
 import { AppError, errorCode, withServerMessage } from "@/lib/errors";
+import { invalidateCachedPrefix } from "@/lib/query-cache";
 
 /**
  * Booking and checkout through the Sheree API (`sheree-backend/docs/api/bookings.md`,
@@ -10,6 +11,38 @@ import { AppError, errorCode, withServerMessage } from "@/lib/errors";
  */
 const key = (profileKey: string) => encodeURIComponent(profileKey.trim());
 const bookingPath = (bookingId: string) => encodeURIComponent(bookingId);
+
+/**
+ * Cache keys (the cache belongs to the signed-in person, so no user id).
+ * `me:booking` prefixes both the list and every single booking, so one
+ * invalidation reaches them all.
+ */
+export const BOOKINGS_PREFIX = "me:booking";
+/** The first page of her bookings (later pages stay on the screen). */
+export const BOOKINGS_KEY = "me:bookings";
+/** One of her bookings (`GET /v1/me/bookings/:id`). */
+export const bookingKey = (bookingId: string) => `me:booking:${bookingId}`;
+/** The review screen's view of a booking (read through the reviews API). */
+export const bookingReviewKey = (bookingId: string) => `me:booking:${bookingId}:review`;
+/**
+ * The booking screen's catalogue for a professional: services, name and
+ * fulfilment (prices and travel fee), so short-lived and never persisted.
+ */
+export const bookingCatalogueKey = (professionalKey: string) => `booking-flow:catalogue:${professionalKey}`;
+/**
+ * Everything a booking feeds: the bookings themselves, the beauticians she has
+ * worked with, spend months, the beauty calendar, look prompts and reviews.
+ * Marks them stale; whatever is on screen refetches at once.
+ */
+export function invalidateBookingViews() {
+  for (const prefix of [BOOKINGS_PREFIX, "me:beauticians", "me:spend:", "me:upkeep", "me:look-prompts", "me:reviews"])
+    invalidateCachedPrefix(prefix);
+}
+const changesBookings = async <T>(request: Promise<T>): Promise<T> => {
+  const result = await request;
+  invalidateBookingViews();
+  return result;
+};
 
 /** Reservation refusals that mean "that time (or price card) can't be booked". */
 const AVAILABILITY_CODES = new Set([
@@ -96,7 +129,7 @@ type ReservedRow = {
 };
 async function reserve(body: Record<string, unknown>) {
   try {
-    const row = await api.post<ReservedRow>("/v1/bookings", { body });
+    const row = await changesBookings(api.post<ReservedRow>("/v1/bookings", { body }));
     const snapshot: BookingSnapshot = {
       price: Number(row.price),
       deposit_amount: Number(row.deposit_amount),
@@ -257,6 +290,8 @@ export async function initializeDeposit(
   } catch (error) {
     throw withServerMessage(error);
   }
+  // Nothing was due: the server promoted the booking, so it's an appointment now.
+  if (data.paid) invalidateBookingViews();
   return {
     accessCode: data.accessCode ?? "",
     authorizationUrl: data.authorizationUrl ?? "",
@@ -272,6 +307,7 @@ export async function verifyDeposit(bookingId: string, reference: string) {
     const data = await api.post<{ paid: boolean }>(`/v1/bookings/${bookingPath(bookingId)}/verify-payment`, {
       body: { reference },
     });
+    if (data.paid) invalidateBookingViews();
     return Boolean(data.paid);
   } catch (error) {
     throw withServerMessage(error);
@@ -282,14 +318,14 @@ export async function verifyDeposit(bookingId: string, reference: string) {
  * `payment_abandoned`); a payment that lands afterwards is refunded server-side.
  */
 export async function releaseUnpaidBooking(bookingId: string) {
-  await api.post<{ released: boolean }>(`/v1/bookings/${bookingPath(bookingId)}/release`);
+  await changesBookings(api.post<{ released: boolean }>(`/v1/bookings/${bookingPath(bookingId)}/release`));
 }
 export async function cancelCustomerBooking(bookingId: string) {
   try {
-    return await api.post<{ status: "cancelled"; refund: "pending" | "failed" | "processing" | "needs_attention" | "refunded" | null; refundAmount?: number; professionalCompensation?: number; /** Sheree service fee returned to the customer. */ shereeFeeRefunded?: number; warning?: string; supportCode?: string }>(
+    return await changesBookings(api.post<{ status: "cancelled"; refund: "pending" | "failed" | "processing" | "needs_attention" | "refunded" | null; refundAmount?: number; professionalCompensation?: number; /** Sheree service fee returned to the customer. */ shereeFeeRefunded?: number; warning?: string; supportCode?: string }>(
       `/v1/me/bookings/${bookingPath(bookingId)}/cancel`,
       { body: { reason: "Cancelled by customer" } },
-    );
+    ));
   } catch (error) {
     throw withServerMessage(error);
   }
@@ -319,7 +355,7 @@ export type RescheduleBooking = {
   travelFee: number;
 };
 /** `GET /v1/me/bookings/:id` and the list items (`docs/api/bookings.md`). */
-type MyBookingRow = {
+export type MyBookingRow = {
   id: string;
   booking_reference: string;
   status: CustomerBooking["status"];
@@ -346,7 +382,7 @@ type MyBookingRow = {
 const feeOrNull = (value: number | null | undefined) => (value === null || value === undefined ? null : Number(value));
 
 /** One of your bookings as the customer; not found (or not yours) reads as an AppError. */
-async function fetchMyBooking(bookingId: string): Promise<MyBookingRow> {
+export async function fetchMyBooking(bookingId: string): Promise<MyBookingRow> {
   try {
     return await api.get<MyBookingRow>(`/v1/me/bookings/${bookingPath(bookingId)}`);
   } catch (error) {
@@ -359,7 +395,9 @@ export async function fetchBookingForReschedule(
   bookingId: string,
 ): Promise<RescheduleBooking> {
   // Rescheduling is customer-only; the API only returns your own bookings.
-  const row = await fetchMyBooking(bookingId);
+  return toRescheduleBooking(await fetchMyBooking(bookingId));
+}
+export function toRescheduleBooking(row: MyBookingRow): RescheduleBooking {
   return {
     id: row.id,
     professionalId: row.professional_id,
@@ -384,9 +422,11 @@ export async function rescheduleBooking(
   mobileService = false,
 ) {
   try {
-    const row = await api.post<MyBookingRow>(`/v1/bookings/${bookingPath(bookingId)}/reschedule`, {
-      body: { starts_at: startsAt, notes: notes || null, mobile_service: mobileService },
-    });
+    const row = await changesBookings(
+      api.post<MyBookingRow>(`/v1/bookings/${bookingPath(bookingId)}/reschedule`, {
+        body: { starts_at: startsAt, notes: notes || null, mobile_service: mobileService },
+      }),
+    );
     return row.id;
   } catch (error) {
     if (isApiError(error) && AVAILABILITY_CODES.has(error.code)) throw new RescheduleAvailabilityError(error.message);
@@ -471,7 +511,9 @@ export async function fetchBookingForDispute(
   // Disputes are raised here by the customer who booked the visit.
   // TODO(api): a professional can dispute too (POST accepts both sides), but
   // there is no read of one booking for them; this page stays customer-only.
-  const row = await fetchMyBooking(bookingId);
+  return toDisputeBooking(await fetchMyBooking(bookingId));
+}
+export function toDisputeBooking(row: MyBookingRow): DisputeBooking {
   return {
     id: row.id,
     serviceName: row.service_name,
@@ -492,14 +534,14 @@ export async function submitBookingDispute(input: {
   requestedRefund?: number | null;
 }) {
   try {
-    return await api.post<{ id: string; status: "open" }>(`/v1/bookings/${bookingPath(input.bookingId)}/disputes`, {
+    return await changesBookings(api.post<{ id: string; status: "open" }>(`/v1/bookings/${bookingPath(input.bookingId)}/disputes`, {
       body: {
         category: input.category,
         subject: input.subject.trim(),
         description: input.description.trim(),
         ...(input.requestedRefund ? { requested_refund: input.requestedRefund } : {}),
       },
-    });
+    }));
   } catch (error) {
     throw withServerMessage(error);
   }

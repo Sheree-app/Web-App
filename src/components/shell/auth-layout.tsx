@@ -93,7 +93,7 @@ export function AuthLayout({
           )}
         </div>
       </div>
-      <LegalFooter className="relative mx-auto w-full max-w-6xl px-6 pt-2 pb-[calc(24px+env(safe-area-inset-bottom))] max-lg:items-center max-lg:text-center lg:pb-8 [&>nav]:max-lg:justify-center" />
+      <LegalFooter className="relative mx-auto w-full max-w-6xl px-6 pt-2 pb-[calc(24px+env(safe-area-inset-bottom))] lg:pb-8" />
     </div>
   );
 }

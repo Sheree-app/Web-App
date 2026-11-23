@@ -5,13 +5,19 @@ import { Avatar, Sheet, Spinner, Textarea } from "@/components/ui";
 import { ProfessionalName } from "@/features/badges/ProfessionalName";
 import {
   createPostComment,
-  fetchPostById,
   fetchPostComments,
-  fetchPostImages,
+  postKey,
   setFeedReaction,
+  SAVED_KEY,
+  SAVED_PREFIX,
+  type CursorPage,
   type Cursor,
+  type PostDetail,
   type PostImage,
 } from "@/features/feed/api";
+import { usePostComments, usePostDetail } from "@/features/feed/queries";
+import { invalidateQueries, updateQueryData } from "@/lib/use-query";
+import type { FeedComment } from "@/types/database";
 import { FeedVideo } from "@/features/feed/FeedVideo";
 import type { FeedPost } from "@/features/feed/types";
 import { errorCode, userMessage } from "@/lib/errors";
@@ -30,7 +36,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 type Comment = {
@@ -40,6 +46,8 @@ type Comment = {
   body: string;
   createdAt: string;
 };
+
+const NO_IMAGES: PostImage[] = [];
 
 /** `lg` and up opens the post with the thread beside the media. */
 const DESKTOP_QUERY = "(min-width: 1024px)";
@@ -76,68 +84,61 @@ export default function PostPage() {
 
   const postId = params.id;
 
-  const [post, setPost] = useState<FeedPost | null>(null);
-  const [images, setImages] = useState<PostImage[]>([]);
+  // Cached: a revisit (or a post opened from a card) paints at once and
+  // refreshes behind it.
+  const detail = usePostDetail(postId);
+  const post = detail.data?.post ?? null;
+  const images = detail.data?.images ?? NO_IMAGES;
+  const loading = detail.isLoading;
+  const notFound = errorCode(detail.error) === "post_not_found";
+  // Only an error with nothing cached to show is worth the full error state,
+  // except a post that no longer exists.
+  const error =
+    detail.error && (!detail.data || notFound)
+      ? notFound
+        ? "This story is no longer available."
+        : userMessage(detail.error, "This post is unavailable right now.")
+      : null;
+
+  // The first page of comments is cached too; older pages stay here and are
+  // dropped when the first page refreshes. Comments being posted show first.
+  const firstComments = usePostComments(postId);
+  const [older, setOlder] = useState<{ base: CursorPage<FeedComment>; items: Comment[]; cursor: Cursor | null } | null>(
+    null,
+  );
+  const [pendingComments, setPendingComments] = useState<Comment[]>([]);
+  const extra = firstComments.data && older?.base === firstComments.data ? older : null;
+  const comments: Comment[] = [
+    ...pendingComments,
+    ...(firstComments.data?.items ?? []),
+    ...(extra?.items ?? []),
+  ];
+  const cursor = extra ? extra.cursor : (firstComments.data?.nextCursor ?? null);
+
   const [activeImage, setActiveImage] = useState(0);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [cursor, setCursor] = useState<Cursor | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
   const [reactionPending, setReactionPending] = useState<"like" | "save" | null>(null);
   const galleryRef = useRef<HTMLDivElement>(null);
 
-  const loadComments = useCallback(
-    async (reset = false) => {
-      try {
-        const page = await fetchPostComments(postId, reset ? null : cursor, 30);
-        setComments((current) => (reset ? page.items : [...current, ...page.items]));
-        setCursor(page.nextCursor);
-      } catch {
-        /* The post is the point; comments can fail quietly. */
-      }
-    },
-    [cursor, postId],
-  );
+  const loadComments = async (reset = false) => {
+    if (reset || !cursor || !firstComments.data) {
+      await firstComments.refetch();
+      return;
+    }
+    const base = firstComments.data;
+    try {
+      const page = await fetchPostComments(postId, cursor, 30);
+      setOlder({ base, items: [...(extra?.items ?? []), ...page.items], cursor: page.nextCursor });
+    } catch {
+      /* The post is the point; comments can fail quietly. */
+    }
+  };
 
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-
-    fetchPostById(postId)
-      .then((next) => {
-        if (!active) return;
-        setPost(next);
-        setError(null);
-      })
-      .catch((cause: unknown) => {
-        if (active) {
-          setError(
-            errorCode(cause) === "post_not_found"
-              ? "This story is no longer available."
-              : userMessage(cause, "This post is unavailable right now."),
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    void fetchPostImages(postId)
-      .then((next) => {
-        if (active) setImages(next);
-      })
-      .catch(() => undefined);
-
-    void loadComments(true);
-
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postId]);
+  /** Changes the post here and wherever it is cached. */
+  const editPost = (change: (post: FeedPost) => FeedPost) =>
+    updateQueryData<PostDetail>(postKey(postId), (current) => ({ ...current, post: change(current.post) }));
 
   useEffect(() => {
     if (searchParams.get("comment") !== "1") return;
@@ -156,23 +157,26 @@ export default function PostPage() {
     }
     const active = kind === "like" ? !post.liked : !post.saved;
     setReactionPending(kind);
-    setPost((current) =>
-      current
-        ? kind === "like"
-          ? { ...current, liked: active, likeCount: current.likeCount + (active ? 1 : -1) }
-          : { ...current, saved: active }
-        : current,
-    );
+    const apply = (on: boolean) =>
+      editPost((current) =>
+        kind === "like"
+          ? on === current.liked
+            ? current
+            : { ...current, liked: on, likeCount: current.likeCount + (on ? 1 : -1) }
+          : { ...current, saved: on },
+      );
+    apply(active);
+    // Unsaving takes it off the saved list at once (saving refreshes the list).
+    if (kind === "save" && !active)
+      updateQueryData<CursorPage<FeedPost>>(SAVED_KEY, (page) => ({
+        ...page,
+        items: page.items.filter((item) => item.id !== post.id),
+      }));
     try {
       await setFeedReaction(post.id, kind, active);
     } catch {
-      setPost((current) =>
-        current
-          ? kind === "like"
-            ? { ...current, liked: !active, likeCount: current.likeCount + (active ? -1 : 1) }
-            : { ...current, saved: !active }
-          : current,
-      );
+      apply(!active);
+      if (kind === "save") invalidateQueries(SAVED_PREFIX);
     } finally {
       setReactionPending(null);
     }
@@ -236,18 +240,18 @@ export default function PostPage() {
       body,
       createdAt: new Date().toISOString(),
     };
-    setComments((current) => [optimistic, ...current]);
+    setPendingComments((current) => [optimistic, ...current]);
     setCommentBody("");
 
     try {
       await createPostComment(post.id, body, null);
-      setPost((current) => (current ? { ...current, commentCount: current.commentCount + 1 } : current));
+      editPost((current) => ({ ...current, commentCount: current.commentCount + 1 }));
       await loadComments(true);
     } catch (cause) {
-      setComments((current) => current.filter((item) => item.id !== optimistic.id));
       setCommentBody(body);
       showError("Comment not posted", userMessage(cause, "Try again."));
     } finally {
+      setPendingComments((current) => current.filter((item) => item.id !== optimistic.id));
       setPosting(false);
     }
   };

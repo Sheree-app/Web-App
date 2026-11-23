@@ -1,5 +1,6 @@
 import { api, type Page } from '@/lib/api';
-import { cachedQuery, invalidateCachedPrefix } from '@/lib/query-cache';
+import { invalidateCachedPrefix } from '@/lib/query-cache';
+import { CREATOR_PROFILE_PREFIX } from '@/features/profile/api';
 import { storageGet, storageSet } from '@/lib/storage';
 import type { FeedComment } from '@/types/database';
 import type { FeedPost } from './types';
@@ -56,37 +57,36 @@ function getFeedSeed():Promise<string>{
   return legacySeed;
 }
 
-export async function fetchFeed(cursor:FeedCursor|null=null,pageSize=10):Promise<CursorPage<FeedPost,FeedCursor>> {
-  const [user,seed]=await Promise.all([api.session.ready(),getFeedSeed()]);
-  const query=()=>fetchFeedPage({seed,cursor,pageSize});
-  // Guests' first page is the same for everyone with this seed: cache it briefly.
-  return !user&&!cursor?cachedQuery(`public-feed:${seed}:${pageSize}`,30_000,query):query();
-}
-
 /**
- * One post with its pictures. The post page asks for the post and for its
- * pictures separately; both come from one request, shared for a few seconds.
+ * Cache keys. The cache belongs to whoever is signed in (or to the guest), so
+ * the feed's likes and saves can sit in "public" keys safely.
+ * - `FEED_KEY`: the first page of "Made for you" (later pages stay in the screen).
+ * - `postKey`: one post with its pictures, by the key it was opened with.
+ * - `postCommentsKey`: the first page of a post's comments.
+ * - `SAVED_KEY`: the first page of saved posts. Everything under `SAVED_PREFIX`
+ *   (this, and the Me page's saved count) is refreshed when a save changes.
  */
-const POST_TTL_MS=5_000;
-const postRequests=new Map<string,{at:number;request:Promise<PostRow>}>();
-function loadPost(postKey:string):Promise<PostRow>{
-  const held=postRequests.get(postKey);
-  if(held&&Date.now()-held.at<POST_TTL_MS)return held.request;
-  const request=api.get<PostRow>(`/v1/posts/${encodeURIComponent(postKey)}`,{auth:'optional'});
-  postRequests.set(postKey,{at:Date.now(),request});
-  request.catch(()=>postRequests.delete(postKey));
-  return request;
+export const FEED_PREFIX='pub:feed';
+export const FEED_KEY=`${FEED_PREFIX}:first`;
+export const postKey=(key:string)=>`pub:post:${key}`;
+export const postCommentsKey=(key:string)=>`pub:post-comments:${key}`;
+export const SAVED_PREFIX='me:saved';
+export const SAVED_KEY=`${SAVED_PREFIX}:page`;
+
+/** One page of the feed; always a network read (the first page is cached by `useFeedFirstPage`). */
+export async function fetchFeed(cursor:FeedCursor|null=null,pageSize=10):Promise<CursorPage<FeedPost,FeedCursor>> {
+  const [,seed]=await Promise.all([api.session.ready(),getFeedSeed()]);
+  return fetchFeedPage({seed,cursor,pageSize});
 }
 
-export async function fetchPostImages(postId:string):Promise<PostImage[]>{
-  const row=await loadPost(postId);
-  return row.images.map(item=>({id:item.id,imageUrl:item.image_url,aspectRatio:Number(item.aspect_ratio),sortOrder:item.sort_order}));
-}
+const toImages=(row:PostRow):PostImage[]=>row.images.map(item=>({id:item.id,imageUrl:item.image_url,aspectRatio:Number(item.aspect_ratio),sortOrder:item.sort_order}));
+const toPost=(row:PostRow):FeedPost=>({...toFeedPost(row),slug:row.slug??undefined});
 
-/** `postId` is the route param: a slug for shared links, a UUID in-app. */
-export async function fetchPostById(postId:string):Promise<FeedPost>{
-  const row=await loadPost(postId);
-  return{...toFeedPost(row),slug:row.slug??undefined};
+export type PostDetail={post:FeedPost;images:PostImage[]};
+/** The post and its pictures in one network read (cached under `postKey`). */
+export async function loadPostDetail(postId:string):Promise<PostDetail>{
+  const row=await api.get<PostRow>(`/v1/posts/${encodeURIComponent(postId)}`,{auth:'optional'});
+  return{post:toPost(row),images:toImages(row)};
 }
 
 export async function fetchSavedFeed(cursor:Cursor|null=null,pageSize=20):Promise<CursorPage<FeedPost>> {
@@ -98,17 +98,19 @@ export async function setFeedReaction(postId:string,kind:'like'|'save',active:bo
   const path=`/v1/posts/${encodeURIComponent(postId)}/${kind}`;
   if(active)await api.put<void>(path);
   else await api.delete<void>(path);
-  postRequests.clear();
+  // The saved list and the Me page's saved count follow a save.
+  if(kind==='save')invalidateCachedPrefix(SAVED_PREFIX);
 }
 
 export async function reportPost(postId:string,reason:string){
   await api.post<void>(`/v1/posts/${encodeURIComponent(postId)}/reports`,{body:{reason}});
 }
 
-/** Drops cached feed pages so the next visit reflects a new post. */
+/** Marks the feed and profiles stale so they reflect a new or changed post. */
 export function invalidateFeedQueries(){
-  invalidateCachedPrefix('public-feed:');
-  invalidateCachedPrefix('creator:');
+  invalidateCachedPrefix(FEED_PREFIX);
+  invalidateCachedPrefix(CREATOR_PROFILE_PREFIX);
+  invalidateCachedPrefix('pub:post:');
 }
 
 // Pages come newest first; each page is reversed so the thread reads top to bottom.
@@ -122,6 +124,6 @@ export async function fetchCommentReplies(commentId:string,cursor:Cursor|null=nu
 }
 export async function createPostComment(postId:string,body:string,parentId:string|null=null):Promise<FeedComment>{
   const row=await api.post<CommentRow>(`/v1/posts/${encodeURIComponent(postId)}/comments`,{body:{body:body.trim(),...(parentId?{parent_id:parentId}:{})}});
-  postRequests.clear();
+  invalidateCachedPrefix('pub:post-comments:');
   return toComment(row);
 }

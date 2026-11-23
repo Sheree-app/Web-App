@@ -3,8 +3,8 @@
 import { Switch } from "@/components/ui";
 import {
   defaultNotificationPreferences,
-  fetchNotificationPreferences,
   fetchPushState,
+  NOTIFICATION_PREFS_KEY,
   openNotificationSettings,
   registerForPushNotifications,
   saveNotificationPreferences,
@@ -12,7 +12,10 @@ import {
   type NotificationPreferences,
   type PushState,
 } from "@/features/notifications/api";
+import { useNotificationPreferences } from "@/features/notifications/queries";
 import { previewWebPush, webPushConfigured } from "@/features/notifications/web-push";
+import { STALE } from "@/lib/query-cache";
+import { invalidateQueries, setQueryData, updateQueryData } from "@/lib/use-query";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
 import { cn } from "@/lib/utils";
@@ -65,7 +68,9 @@ export default function NotificationSettingsPage() {
   const { role } = useAuth();
   const { toast, error: showError } = useToast();
 
-  const [prefs, setPrefs] = useState<NotificationPreferences>(defaultNotificationPreferences);
+  // Cached: a revisit paints her settings at once and refreshes them behind.
+  const prefsQuery = useNotificationPreferences();
+  const prefs = prefsQuery.data ?? defaultNotificationPreferences;
   const [push, setPush] = useState<PushState>({
     supported: true,
     configured: webPushConfigured(),
@@ -73,36 +78,47 @@ export default function NotificationSettingsPage() {
     subscribed: false,
     deviceId: null,
   });
-  const [loading, setLoading] = useState(true);
+  const [pushLoading, setPushLoading] = useState(true);
+  const loading = prefsQuery.isLoading || pushLoading;
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState(false);
 
+  // This browser's push state is read from the device, not the network.
   useEffect(() => {
-    void Promise.all([fetchNotificationPreferences(), fetchPushState()])
-      .then(([next, nextPush]) => {
-        setPrefs(next);
-        setPush(nextPush);
-      })
+    void fetchPushState()
+      .then(setPush)
       .catch(() => undefined)
-      .finally(() => setLoading(false));
+      .finally(() => setPushLoading(false));
   }, []);
 
 
-  const persist = async (next: NotificationPreferences) => {
+  const persist = async (next: NotificationPreferences, undo: () => void) => {
     setSaving(true);
     try {
       await saveNotificationPreferences(next);
     } catch {
+      undo();
       showError("Settings not saved", "Try again.");
     } finally {
       setSaving(false);
     }
   };
 
+  /** Edits shown at once (and kept in the cache); saved by `persist`. */
+  const editPrefs = (next: NotificationPreferences) => setQueryData(NOTIFICATION_PREFS_KEY, next, STALE.medium);
+  /** A failed save puts the server's settings back. */
+  const reloadPrefs = () => invalidateQueries(NOTIFICATION_PREFS_KEY);
+
   const update = (key: keyof NotificationPreferences, value: boolean) => {
+    const previous = prefs[key];
     const next = { ...prefs, [key]: value };
-    setPrefs(next);
-    void persist(next);
+    editPrefs(next);
+    void persist(next, () =>
+      updateQueryData<NotificationPreferences>(NOTIFICATION_PREFS_KEY, (current) => ({
+        ...current,
+        [key]: previous,
+      })),
+    );
   };
 
   /**
@@ -367,8 +383,8 @@ export default function NotificationSettingsPage() {
               <input
                 type="time"
                 value={prefs.quietFrom}
-                onChange={(event) => setPrefs({ ...prefs, quietFrom: event.target.value })}
-                onBlur={() => void persist(prefs)}
+                onChange={(event) => editPrefs({ ...prefs, quietFrom: event.target.value })}
+                onBlur={() => void persist(prefs, reloadPrefs)}
                 className="h-12 rounded-field bg-surface px-3 text-body text-ink outline-none"
               />
             </label>
@@ -377,8 +393,8 @@ export default function NotificationSettingsPage() {
               <input
                 type="time"
                 value={prefs.quietUntil}
-                onChange={(event) => setPrefs({ ...prefs, quietUntil: event.target.value })}
-                onBlur={() => void persist(prefs)}
+                onChange={(event) => editPrefs({ ...prefs, quietUntil: event.target.value })}
+                onBlur={() => void persist(prefs, reloadPrefs)}
                 className="h-12 rounded-field bg-surface px-3 text-body text-ink outline-none"
               />
             </label>

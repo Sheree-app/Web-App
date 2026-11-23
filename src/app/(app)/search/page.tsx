@@ -3,7 +3,8 @@ import { CustomerPrice, usePricing } from "@/providers/pricing-provider";
 
 import { Skeleton } from "@/components/ui";
 import { FoundingBadge } from "@/features/badges/FoundingBadge";
-import { searchMarketplace, type PriceSort, type SearchKind, type SearchResult } from "@/features/search/api";
+import { type PriceSort, type SearchKind, type SearchResult } from "@/features/search/api";
+import { useSearchResults } from "@/features/search/queries";
 import {
   ArrowDown,
   ArrowLeft,
@@ -22,7 +23,7 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 type Tab = SearchKind | "all";
 
@@ -67,6 +68,8 @@ type SearchPricing = {
   includeUnpriced: boolean;
 };
 
+const NO_RESULTS: SearchResult[] = [];
+
 const initialPricing: SearchPricing = {
   minimum: null,
   maximum: null,
@@ -89,38 +92,19 @@ export default function SearchPage() {
   const [pricing, setPricing] = useState<SearchPricing>(initialPricing);
   const [priceOpen, setPriceOpen] = useState(false);
 
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
-
-  const run = useCallback(
-    async (text: string, value: SearchPricing, rating: number) => {
-      if (text.trim().length < 2) {
-        setResults([]);
-        setError(false);
-        return;
-      }
-      setLoading(true);
-      setError(false);
-      try {
-        setResults(await searchMarketplace(text.trim(), value, rating));
-      } catch {
-        setError(true);
-        setResults([]);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
-
-  // Debounced, the way the original did it.
+  // Debounced, the way the original did it. Each search is cached, so going
+  // back to an earlier one shows its results at once.
+  const [term, setTerm] = useState({ text: "", pricing: initialPricing, rating: 0 });
   useEffect(() => {
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void run(query, pricing, minRating), 320);
-    return () => window.clearTimeout(timer.current);
-  }, [minRating, pricing, query, run]);
+    const timer = window.setTimeout(() => setTerm({ text: query.trim(), pricing, rating: minRating }), 320);
+    return () => window.clearTimeout(timer);
+  }, [minRating, pricing, query]);
+
+  const search = useSearchResults(term.text, term.pricing, term.rating);
+  const results: SearchResult[] = term.text.length >= 2 ? (search.data ?? NO_RESULTS) : NO_RESULTS;
+  const loading = search.isLoading;
+  // Only an error with nothing cached to show is worth the error state.
+  const error = Boolean(search.error && !search.data);
 
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: "all", label: "All" },

@@ -1,4 +1,4 @@
-import { fetchAccount } from "@/features/auth/api";
+import { fetchAccount, type Account } from "@/features/auth/api";
 import {
   EMPTY_SOCIAL_LINKS,
   normalizeSocialLink,
@@ -9,6 +9,7 @@ import { api } from "@/lib/api";
 import { AppError, errorCode } from "@/lib/errors";
 import { uploadMedia, deleteMedia } from "@/lib/media";
 import type { MediaAsset } from "@/lib/media/types";
+import { creatorProfileKey } from "@/features/profile/api";
 import { cachedQuery, updateCached } from "@/lib/query-cache";
 
 /**
@@ -29,34 +30,47 @@ export type AccountProfile = {
   bio: string;
   socials: SocialLinks;
 };
-const accountKey = (userId: string, role: "customer" | "professional") =>
-  `account:${userId}:${role}`;
-const ACCOUNT_TTL = 5 * 60 * 1000;
+/** Cache key (the cache belongs to the signed-in person, so no user id). */
+export const accountQueryKey = (role: "customer" | "professional") => `me:account:${role}`;
+// The user id stays in the signature for existing callers.
+const accountKey = (_userId: string, role: "customer" | "professional") => accountQueryKey(role);
+export const ACCOUNT_TTL = 5 * 60 * 1000;
+/**
+ * `GET /v1/me` as the API returns it (username, phone, the professional-account
+ * wish), for the personal details and settings screens.
+ */
+export const ACCOUNT_DETAILS_KEY = "me:details";
 
 export async function fetchAccountProfile(
   userId: string,
   role: "customer" | "professional",
   email: string,
 ): Promise<AccountProfile> {
-  return cachedQuery(accountKey(userId, role), ACCOUNT_TTL, async () => {
-    const account = await fetchAccount();
-    const business = role === "professional" ? account.professional : null;
-    const socials = { ...EMPTY_SOCIAL_LINKS };
-    const stored = business?.socials ?? {};
-    for (const platform of Object.keys(socials) as SocialPlatform[])
-      socials[platform] = stored[platform] ?? null;
-    return {
-      name: account.username ?? "Sheree member",
-      email: account.email ?? email,
-      avatar: business?.profile_photo_url ?? account.avatar_url ?? null,
-      phone: account.phone ?? "",
-      business: business?.business_name ?? "",
-      verified: Boolean(business?.is_verified),
-      location: business?.location ?? "",
-      bio: business?.bio ?? "",
-      socials,
-    };
-  });
+  return cachedQuery(accountKey(userId, role), ACCOUNT_TTL, () => loadAccountProfile(role, email));
+}
+
+/** `GET /v1/me` shaped for the profile screens; always a network read. */
+export async function loadAccountProfile(
+  role: "customer" | "professional",
+  email: string,
+): Promise<AccountProfile> {
+  const account = await fetchAccount();
+  const business = role === "professional" ? account.professional : null;
+  const socials = { ...EMPTY_SOCIAL_LINKS };
+  const stored = business?.socials ?? {};
+  for (const platform of Object.keys(socials) as SocialPlatform[])
+    socials[platform] = stored[platform] ?? null;
+  return {
+    name: account.username ?? "Sheree member",
+    email: account.email ?? email,
+    avatar: business?.profile_photo_url ?? account.avatar_url ?? null,
+    phone: account.phone ?? "",
+    business: business?.business_name ?? "",
+    verified: Boolean(business?.is_verified),
+    location: business?.location ?? "",
+    bio: business?.bio ?? "",
+    socials,
+  };
 }
 
 /** Sets every platform at once: a link saves it, an empty value removes it. */
@@ -75,7 +89,7 @@ export async function saveProfessionalSocialLinks(
   const professionalId = await fetchOwnProfessionalId(userId).catch(() => null);
   if (professionalId)
     updateCached<{ socials: SocialLinks & { whatsapp: string | null; telephone: string | null } }>(
-      `creator:${professionalId}`,
+      creatorProfileKey(professionalId),
       (current) => ({ ...current, socials: { ...current.socials, ...stored } }),
     );
   return stored;
@@ -106,6 +120,11 @@ export async function updateAccountProfile(
       },
     });
   }
+  updateCached<Account>(ACCOUNT_DETAILS_KEY, (current) => ({
+    ...current,
+    username: values.username.trim(),
+    phone: values.phone.trim() || null,
+  }));
   updateCached<AccountProfile>(accountKey(userId, role), (current) => ({
     ...current,
     name: values.username.trim(),
@@ -154,6 +173,7 @@ export async function fetchWantsProfessionalAccount(_userId: string): Promise<bo
 
 export async function setWantsProfessionalAccount(value: boolean) {
   await api.put<void>("/v1/me/professional-intent", { body: { value } });
+  updateCached<Account>(ACCOUNT_DETAILS_KEY, (current) => ({ ...current, wants_professional_account: value }));
 }
 
 // The API acts on the signed-in user; the parameters keep the old signature.

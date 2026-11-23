@@ -13,15 +13,11 @@ import {
   Textarea,
   TopBar,
 } from "@/components/ui";
-import {
-  fetchBookingForDispute,
-  submitBookingDispute,
-  type DisputeBooking,
-  type DisputeCategory,
-} from "@/features/booking/api";
+import { submitBookingDispute, type DisputeCategory } from "@/features/booking/api";
+import { useDisputeBooking } from "@/features/booking/queries";
 import { formatSlot } from "@/lib/utils";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const CATEGORIES: Array<{ value: DisputeCategory; label: string }> = [
   { value: "service_quality", label: "The result wasn’t right" },
@@ -43,35 +39,19 @@ export default function DisputePage() {
   const params = useParams<{ bookingId: string }>();
   const bookingId = params.bookingId;
 
-  const [booking, setBooking] = useState<DisputeBooking | null>(null);
+  const bookingQuery = useDisputeBooking(bookingId);
+  const booking = bookingQuery.data ?? null;
   const [category, setCategory] = useState<DisputeCategory | "">("");
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
   const [refund, setRefund] = useState("");
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let active = true;
-    fetchBookingForDispute(bookingId)
-      .then((next) => {
-        if (active) setBooking(next);
-      })
-      .catch((cause: unknown) => {
-        if (active) {
-          setError(userMessage(cause, "This booking isn’t available."));
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [bookingId]);
+  const loading = bookingQuery.isLoading;
+  const loadError =
+    bookingQuery.error && !booking ? userMessage(bookingQuery.error, "This booking isn’t available.") : "";
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -137,7 +117,7 @@ export default function DisputePage() {
     return (
       <div className="flex flex-col gap-4">
         <TopBar title="Report a problem" backTo="/bookings" />
-        <ErrorState message={error || "This booking isn’t available."} />
+        <ErrorState message={error || loadError || "This booking isn’t available."} />
       </div>
     );
   }

@@ -46,6 +46,17 @@ type Row = {
   rank: number;
 };
 
+/** Cache key for one search (public data). */
+export const searchKey = (query: string, pricing: SearchPricing, minimumRating: number) =>
+  `pub:search:${JSON.stringify([
+    query,
+    pricing.minimum,
+    pricing.maximum,
+    pricing.sort,
+    pricing.includeUnpriced,
+    minimumRating,
+  ])}`;
+
 /**
  * One list of professionals, services, posts and categories. The API labels
  * rows with the public business name and turns stored service photo paths into

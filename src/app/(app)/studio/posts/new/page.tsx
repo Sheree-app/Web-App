@@ -3,11 +3,11 @@ import { usePricing } from "@/providers/pricing-provider";
 
 import { FormError, Spinner } from "@/components/ui";
 import {
-  getPostCategories,
   publishFeedPost,
   type PostCategory,
   type PublishStage,
 } from "@/features/feed/upload";
+import { usePostCategories } from "@/features/feed/upload-queries";
 import { mediaAssetFromFile } from "@/lib/media";
 import {
   MAX_VIDEO_BYTES,
@@ -23,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 const MAX_POST_IMAGES = 8;
+const noCategories: PostCategory[] = [];
 
 type DraftVideo = {
   file: File;
@@ -56,26 +57,20 @@ export default function NewPostPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const videoInput = useRef<HTMLInputElement>(null);
 
-  const [categories, setCategories] = useState<PostCategory[]>([]);
+  // Cached: the chips paint at once on a revisit.
+  const categories = usePostCategories().data ?? noCategories;
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [video, setVideo] = useState<DraftVideo | null>(null);
   const [preparingVideo, setPreparingVideo] = useState(false);
   const [caption, setCaption] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [chosenCategoryId, setCategoryId] = useState("");
+  // The first category until she picks one, as before.
+  const categoryId = chosenCategoryId || categories[0]?.id || "";
   const [price, setPrice] = useState("");
   const [error, setError] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState<PublishStage | null>(null);
-
-  useEffect(() => {
-    void getPostCategories()
-      .then((items) => {
-        setCategories(items);
-        setCategoryId((current) => current || items[0]?.id || "");
-      })
-      .catch(() => setCategories([]));
-  }, []);
 
   // Release the local poster object URL when the draft clip changes.
   useEffect(() => {

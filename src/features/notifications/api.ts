@@ -1,5 +1,6 @@
 import { api, type Page } from "@/lib/api";
 import { AppError } from "@/lib/errors";
+import { invalidateCachedPrefix } from "@/lib/query-cache";
 import { storageGet, storageSet } from "@/lib/storage";
 import {
   notificationPermission,
@@ -10,6 +11,17 @@ import {
 } from "./web-push";
 
 export type NotificationAudience = "customer" | "professional" | "all";
+
+/**
+ * Cache keys. Everything under `NOTIFICATIONS_PREFIX` (the inbox's first page
+ * and the unread counts) is refreshed whenever something is marked read.
+ */
+export const NOTIFICATIONS_PREFIX = "me:notifications";
+export const notificationsKey = (audience: "customer" | "professional") =>
+  `${NOTIFICATIONS_PREFIX}:list:${audience}`;
+export const unreadCountKey = (audience: "customer" | "professional") =>
+  `${NOTIFICATIONS_PREFIX}:unread:${audience}`;
+export const NOTIFICATION_PREFS_KEY = "me:notification-prefs";
 
 export type NotificationData = {
   url?: unknown;
@@ -315,6 +327,7 @@ export async function fetchNotifications(
 
 export async function markNotificationRead(id: string) {
   await api.post<void>(`/v1/notifications/${encodeURIComponent(id)}/read`);
+  invalidateCachedPrefix(NOTIFICATIONS_PREFIX);
 }
 
 /** Records that a notification was acted on — drives the "opened" metric. */
@@ -328,6 +341,7 @@ export async function recordAppOpen(mode: "customer" | "professional") {
 
 export async function markAllNotificationsRead(audience: "customer" | "professional") {
   await api.post<{ updated: number }>("/v1/notifications/read-all", { body: { audience } });
+  invalidateCachedPrefix(NOTIFICATIONS_PREFIX);
 }
 
 // The badge is decoration: it never throws, so a failure here can't take down

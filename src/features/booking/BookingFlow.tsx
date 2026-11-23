@@ -29,9 +29,9 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { AppError, userMessage } from "@/lib/errors";
 import { useMessaging } from "@/providers/messaging-provider";
 import { formatTime12 } from "@/features/booking/time-format";
-import { resolveProfileId } from "@/features/profile/api";
-import { fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
+import { fetchProfessionalName } from "@/features/services/api";
 import { duration, type Service } from "@/features/services/data";
+import { useBookingCatalogue } from "./queries";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/providers/toast-provider";
 import {
@@ -83,6 +83,8 @@ const DAY_DOT: Record<DayState, string> = {
   closed: "bg-line",
 };
 
+const NO_SERVICES: Service[] = [];
+
 const EMPTY_FULFILMENT: BookingFulfilment = {
   offersMobile: false,
   travelFee: 0,
@@ -113,19 +115,27 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
   const isCustomBooking = Boolean(priceCardId);
 
   const [step, setStep] = useState<Step>("date");
-  const [services, setServices] = useState<Service[]>([]);
+  /**
+   * A catalogue booking's services, name and fulfilment, from the short-lived
+   * `booking-flow:` cache (a quick revisit paints at once). The route segment
+   * can be a handle (`/booking/janedoe`) or a profile id; every booking RPC
+   * takes the profile uuid, so the catalogue resolves it up front.
+   */
+  const catalogue = useBookingCatalogue(priceCardId ? null : professionalId);
+  // A price card is read fresh every time: its status decides if it can be booked.
   const [customCard, setCustomCard] = useState<CustomPriceCard | null>(null);
   const [customError, setCustomError] = useState("");
-  const [professionalName, setProfessionalName] = useState("");
-  const [fulfilment, setFulfilment] = useState<BookingFulfilment>(EMPTY_FULFILMENT);
-  const [ready, setReady] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customFulfilment, setCustomFulfilment] = useState<BookingFulfilment>(EMPTY_FULFILMENT);
+  const [customReady, setCustomReady] = useState(false);
+  const [customLoadError, setCustomLoadError] = useState(false);
   const [completedCustomBookingId, setCompletedCustomBookingId] = useState("");
-  /**
-   * The route segment can be a handle (`/booking/janedoe`) or a profile id.
-   * Every booking RPC takes the profile uuid, so resolve it once up front.
-   */
-  const [resolvedProfileId, setResolvedProfileId] = useState("");
+  const services = catalogue.data?.services ?? NO_SERVICES;
+  const professionalName = isCustomBooking ? customName : (catalogue.data?.name ?? "");
+  const fulfilment = isCustomBooking ? customFulfilment : (catalogue.data?.fulfilment ?? EMPTY_FULFILMENT);
+  const ready = isCustomBooking ? customReady : Boolean(catalogue.data || catalogue.error);
+  const loadError = isCustomBooking ? customLoadError : Boolean(catalogue.error && !catalogue.data);
+  const resolvedProfileId = catalogue.data?.profileId ?? "";
   const bookingProfileId = customCard?.professionalProfileId ?? resolvedProfileId;
 
   const [days, setDays] = useState<AvailabilityDay[]>([]);
@@ -181,67 +191,49 @@ export function BookingFlow({ professionalId }: { professionalId: string }) {
       : messagingStatus === "ready"
         ? "ready"
         : "unavailable";
-  // One load for everything the checkout needs to describe itself.
+  // A price card's load: everything the checkout needs to describe it.
   useEffect(() => {
+    if (!priceCardId) return;
     let active = true;
     const load = async () => {
-      if (priceCardId) {
-        // Price cards live in Convex: wait for messaging to sign in first.
-        if (cardGate === "wait") return;
-        if (cardGate !== "ready" || !convex) {
-          throw new AppError("Messaging isn’t available right now, so this price card can’t be opened. Try again shortly.");
-        }
-        // The booking link names the professional by account id (the chat peer).
-        const card = await fetchConversationPriceCard(priceCardId, professionalId, (id) =>
-          convex.query(convexApi.priceCards.get, { priceCardId: id as Id<"priceCards"> }),
-        );
-        if (!card) {
-          throw new AppError("This price card is no longer available.");
-        }
-        if (card.status === "cancelled") {
-          throw new AppError("This price card was withdrawn by your professional.");
-        }
-        if (card.status === "booked" || card.bookingId) {
-          throw new AppError("This price card has already been booked.");
-        }
-        if (card.expiresAt && new Date(card.expiresAt).getTime() <= Date.now()) {
-          throw new AppError("This price card has expired. Ask your professional for a fresh offer.");
-        }
-
-        const [nextName, nextFulfilment] = await Promise.all([
-          fetchProfessionalName(card.professionalProfileId).catch(() => ""),
-          fetchBookingFulfilment(card.professionalProfileId).catch(() => null),
-        ]);
-        if (!active) return;
-        setCustomCard(card);
-        setProfessionalName(nextName);
-        if (nextFulfilment) setFulfilment(nextFulfilment);
-        setServices([]);
-        setReady(true);
-        return;
+      // Price cards live in Convex: wait for messaging to sign in first.
+      if (cardGate === "wait") return;
+      if (cardGate !== "ready" || !convex) {
+        throw new AppError("Messaging isn’t available right now, so this price card can’t be opened. Try again shortly.");
+      }
+      // The booking link names the professional by account id (the chat peer).
+      const card = await fetchConversationPriceCard(priceCardId, professionalId, (id) =>
+        convex.query(convexApi.priceCards.get, { priceCardId: id as Id<"priceCards"> }),
+      );
+      if (!card) {
+        throw new AppError("This price card is no longer available.");
+      }
+      if (card.status === "cancelled") {
+        throw new AppError("This price card was withdrawn by your professional.");
+      }
+      if (card.status === "booked" || card.bookingId) {
+        throw new AppError("This price card has already been booked.");
+      }
+      if (card.expiresAt && new Date(card.expiresAt).getTime() <= Date.now()) {
+        throw new AppError("This price card has expired. Ask your professional for a fresh offer.");
       }
 
-      const profileId = await resolveProfileId(professionalId);
-      const [nextServices, nextName, nextFulfilment] = await Promise.all([
-        fetchProfessionalServices(profileId),
-        fetchProfessionalName(profileId).catch(() => ""),
-        fetchBookingFulfilment(profileId).catch(() => null),
+      const [nextName, nextFulfilment] = await Promise.all([
+        fetchProfessionalName(card.professionalProfileId).catch(() => ""),
+        fetchBookingFulfilment(card.professionalProfileId).catch(() => null),
       ]);
       if (!active) return;
-      setResolvedProfileId(profileId);
-      setServices(nextServices);
-      setProfessionalName(nextName);
-      if (nextFulfilment) setFulfilment(nextFulfilment);
-      setReady(true);
+      setCustomCard(card);
+      setCustomName(nextName);
+      if (nextFulfilment) setCustomFulfilment(nextFulfilment);
+      setCustomReady(true);
     };
 
     load().catch((cause) => {
       if (!active) return;
-      if (priceCardId) {
-        setCustomError(userMessage(cause, "This price card could not be opened.", "booking.priceCard"));
-      }
-      setLoadError(true);
-      setReady(true);
+      setCustomError(userMessage(cause, "This price card could not be opened.", "booking.priceCard"));
+      setCustomLoadError(true);
+      setCustomReady(true);
     });
 
     return () => {

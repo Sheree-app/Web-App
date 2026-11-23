@@ -1,4 +1,4 @@
-import { cachedQuery } from '@/lib/query-cache';
+import { cachedQuery, STALE } from '@/lib/query-cache';
 import { api } from '@/lib/api';
 import { EMPTY_SOCIAL_LINKS, type SocialLinks } from './socials';
 
@@ -70,13 +70,9 @@ type Payload = {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** One request per key, shared with `fetchCreatorProfile` for five minutes. */
-function fetchPayload(key: string): Promise<Payload> {
-  const trimmed = key.trim();
-  return cachedQuery(`creator:payload:${trimmed}`, 5 * 60 * 1000, () =>
-    api.get<Payload>(`/v1/professionals/${encodeURIComponent(trimmed)}`, { auth: 'optional' }),
-  );
-}
+/** Cache key for a public profile, by the key it was opened with (handle or UUID). */
+export const creatorProfileKey = (key: string) => `pub:pro:${key.trim()}`;
+export const CREATOR_PROFILE_PREFIX = 'pub:pro:';
 
 /**
  * Resolve a professional handle while keeping legacy UUID links valid. The API
@@ -85,65 +81,69 @@ function fetchPayload(key: string): Promise<Payload> {
 export async function resolveProfileId(profileKey: string): Promise<string> {
   if (UUID_RE.test(profileKey.trim())) return profileKey.trim();
   try {
-    return (await fetchPayload(profileKey)).id;
+    return (await fetchCreatorProfile(profileKey)).id;
   } catch {
     // As before: an unresolvable key is passed on, and the next read reports it.
     return profileKey;
   }
 }
 
+/** The profile from the cache when fresh, otherwise from the network. */
 export async function fetchCreatorProfile(id: string): Promise<CreatorProfile> {
-  return cachedQuery(`creator:${id}`, 5 * 60 * 1000, async () => {
-    const p = await fetchPayload(id);
+  return cachedQuery(creatorProfileKey(id), STALE.medium, () => loadCreatorProfile(id));
+}
 
-    // The business name is the public name, matching the feed and mobile.
-    const businessName = p.business_name?.trim() || p.name;
-    // TODO(api): the API's socials have no `youtube`; it stays empty until added.
-    const socials = p.socials ?? {};
+/** `GET /v1/professionals/:key`, shaped for the profile page; always a network read. */
+export async function loadCreatorProfile(id: string): Promise<CreatorProfile> {
+  const p = await api.get<Payload>(`/v1/professionals/${encodeURIComponent(id.trim())}`, { auth: 'optional' });
 
-    return {
-      id: p.id,
-      handle: p.handle,
-      name: businessName,
-      businessName,
-      bio: p.bio,
-      location: p.location,
-      verified: Boolean(p.verified),
-      founding: Boolean(p.founding),
-      official: Boolean(p.official),
-      avatar: p.avatar,
-      bookings: p.bookings,
-      rating: Number(p.rating),
-      reviewCount: p.review_count,
-      category: p.category,
-      portfolio: p.portfolio.map((x) => ({
-        id: x.id,
-        image: x.image,
-        caption: x.caption,
-        aspectRatio: Number(x.aspect_ratio),
-      })),
-      studio: (p.studio ?? []).map((x) => ({
-        id: x.id,
-        image: x.image,
-        aspectRatio: Number(x.aspect_ratio),
-      })),
-      reviews: (p.reviews ?? []).map((x) => ({
-        id: x.id,
-        author: x.author ?? 'Sheree member',
-        avatar: x.avatar,
-        rating: Number(x.rating),
-        body: x.body,
-        service: x.service,
-        createdAt: x.created_at,
-      })),
-      socials: {
-        ...EMPTY_SOCIAL_LINKS,
-        ...Object.fromEntries(
-          Object.keys(EMPTY_SOCIAL_LINKS).map((key) => [key, socials[key as keyof SocialLinks] ?? null]),
-        ),
-        whatsapp: socials.whatsapp ?? null,
-        telephone: socials.telephone ?? null,
-      } as CreatorSocials,
-    };
-  });
+  // The business name is the public name, matching the feed and mobile.
+  const businessName = p.business_name?.trim() || p.name;
+  // TODO(api): the API's socials have no `youtube`; it stays empty until added.
+  const socials = p.socials ?? {};
+
+  return {
+    id: p.id,
+    handle: p.handle,
+    name: businessName,
+    businessName,
+    bio: p.bio,
+    location: p.location,
+    verified: Boolean(p.verified),
+    founding: Boolean(p.founding),
+    official: Boolean(p.official),
+    avatar: p.avatar,
+    bookings: p.bookings,
+    rating: Number(p.rating),
+    reviewCount: p.review_count,
+    category: p.category,
+    portfolio: p.portfolio.map((x) => ({
+      id: x.id,
+      image: x.image,
+      caption: x.caption,
+      aspectRatio: Number(x.aspect_ratio),
+    })),
+    studio: (p.studio ?? []).map((x) => ({
+      id: x.id,
+      image: x.image,
+      aspectRatio: Number(x.aspect_ratio),
+    })),
+    reviews: (p.reviews ?? []).map((x) => ({
+      id: x.id,
+      author: x.author ?? 'Sheree member',
+      avatar: x.avatar,
+      rating: Number(x.rating),
+      body: x.body,
+      service: x.service,
+      createdAt: x.created_at,
+    })),
+    socials: {
+      ...EMPTY_SOCIAL_LINKS,
+      ...Object.fromEntries(
+        Object.keys(EMPTY_SOCIAL_LINKS).map((key) => [key, socials[key as keyof SocialLinks] ?? null]),
+      ),
+      whatsapp: socials.whatsapp ?? null,
+      telephone: socials.telephone ?? null,
+    } as CreatorSocials,
+  };
 }

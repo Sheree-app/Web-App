@@ -2,7 +2,7 @@
 import { StartConversation } from "@/features/messaging/StartConversation";
 
 import { Avatar, CardSkeleton, Skeleton, Spinner } from "@/components/ui";
-import { fetchCreatorProfile, type CreatorProfile } from "@/features/profile/api";
+import { useCreatorProfile } from "@/features/profile/queries";
 import { SocialIcon, type SocialIconName } from "@/features/profile/SocialIcon";
 import { SOCIAL_PLATFORMS, normalizeSocialLink, type SocialPlatform } from "@/features/profile/socials";
 import { useToast } from "@/providers/toast-provider";
@@ -10,7 +10,7 @@ import { ProfessionalName } from "@/features/badges/ProfessionalName";
 import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, MapPin, Share2, X } from "lucide-react";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 const stars = (rating: number) => "★".repeat(Math.round(rating)) + "☆".repeat(Math.max(0, 5 - Math.round(rating)));
@@ -28,26 +28,14 @@ export default function ProfessionalPage() {
   const { toast } = useToast();
   const profileId = params.id;
 
-  const [profile, setProfile] = useState<CreatorProfile | null>(null);
+  // Cached: a revisit (or a hover prefetch) paints at once and refreshes behind it.
+  const { data, isLoading: loading, refetch } = useCreatorProfile(profileId);
+  // A missing row and a network failure look the same to the reader, and the
+  // "Profile unavailable" state covers both.
+  const profile = data ?? null;
+  const load = () => refetch();
   const [tab, setTab] = useState<Tab>("work");
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      setProfile(await fetchCreatorProfile(profileId));
-    } catch {
-      // A missing row and a network failure look the same to the reader, and
-      // the "Profile unavailable" state covers both.
-      setProfile(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [profileId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const share = async () => {
     if (!profile) return;

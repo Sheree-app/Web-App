@@ -253,6 +253,42 @@ export async function uploadMedia(
   };
 }
 
+/**
+ * Uploads an image to a presigned target that is not a public `media` row,
+ * e.g. a private look photo (`POST /v1/me/looks/photo-uploads`). The same
+ * validate → WebP variants → PUT pipeline as `uploadMedia`, but `presign`
+ * asks the feature's own endpoint for the URLs and nothing is confirmed here:
+ * the caller sends the ids with whatever it saves next.
+ */
+export async function uploadPresignedImage<T extends { variants: Array<{ name: string; uploadUrl: string }> }>(
+  asset: MediaAsset,
+  presign: (variants: ReturnType<typeof variantPayload>) => Promise<T>,
+  options: UploadOptions = {},
+): Promise<{ ticket: T; variants: ProcessedVariant[] }> {
+  validateMediaAsset(asset);
+  const variants = await processMediaVariants(asset, { quality: options.quality });
+  // These endpoints accept WebP only; a browser that can't encode it would
+  // otherwise get a validation error that means nothing to her.
+  if (variants.some((v) => v.mimeType !== "image/webp")) {
+    throw new MediaUploadError("This browser can't prepare photos for upload. Try Chrome, Edge or Firefox.");
+  }
+
+  let ticket: T;
+  try {
+    ticket = await presign(variantPayload(variants));
+    if (!ticket?.variants?.length) throw new Error("No upload URLs returned");
+  } catch (error) {
+    throw apiFailure(error, "Photo uploads are unavailable right now. Please try again shortly.");
+  }
+
+  for (const variant of variants) {
+    const target = ticket.variants.find((item) => item.name === variant.name);
+    if (!target) throw new MediaUploadError("The upload could not be prepared. Please try again.");
+    await uploadVariant(variant, target.uploadUrl, options);
+  }
+  return { ticket, variants };
+}
+
 /** Normalizes a full upload result into something the API can delete. */
 function toDeletionTarget(target: MediaDeletionTarget | UploadedMedia): MediaDeletionTarget {
   if ("bucketKey" in target) {

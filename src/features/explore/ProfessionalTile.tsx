@@ -3,6 +3,7 @@ import { CustomerPrice } from "@/providers/pricing-provider";
 
 import { cn } from "@/lib/utils";
 import { FoundingBadge } from "@/features/badges/FoundingBadge";
+import { prefetchCreatorProfile } from "@/features/profile/queries";
 import type { Professional } from "@/features/explore/data";
 import { BadgeCheck, Sparkles } from "lucide-react";
 import Image from "next/image";
@@ -23,9 +24,14 @@ export function ProfessionalTile({
   wide?: boolean;
   className?: string;
 }) {
+  // The profile is usually the next screen: warm it before the tap lands.
+  const warm = () => prefetchCreatorProfile(item.id);
   return (
     <Link
       href={`/professional/${item.id}`}
+      onPointerEnter={warm}
+      onFocus={warm}
+      onTouchStart={warm}
       className={cn(
         "block shrink-0 overflow-hidden rounded-card bg-surface transition active:opacity-80",
         wide ? "w-full" : "w-[224px]",

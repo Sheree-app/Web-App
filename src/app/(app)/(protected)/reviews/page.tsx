@@ -2,11 +2,13 @@
 
 import { Avatar } from "@/components/ui";
 import { ProfessionalName } from "@/features/badges/ProfessionalName";
-import { fetchCustomerReviews, type CustomerReview } from "@/features/reviews/api";
+import type { CustomerReview } from "@/features/reviews/api";
+import { useCustomerReviews } from "@/features/reviews/queries";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
 
 const stars = (rating: number) => "★".repeat(rating) + "☆".repeat(Math.max(0, 5 - rating));
+
+const NO_REVIEWS: CustomerReview[] = [];
 
 /**
  * My reviews, ported from `CustomerReviewsScreen` — including the star glyphs
@@ -14,22 +16,13 @@ const stars = (rating: number) => "★".repeat(rating) + "☆".repeat(Math.max(0
  */
 export default function CustomerReviewsPage() {
   const router = useRouter();
-  const [items, setItems] = useState<CustomerReview[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(false);
-    fetchCustomerReviews()
-      .then(setItems)
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Cached (shared with the Me page's count): a revisit paints at once.
+  const reviews = useCustomerReviews();
+  const items = reviews.data ?? NO_REVIEWS;
+  const loading = !reviews.data && !reviews.error;
+  // Only an error with nothing cached to show is worth the error state.
+  const error = Boolean(reviews.error && !reviews.data);
+  const load = () => void reviews.refetch();
 
   return (
     <div className="flex flex-col px-4 pb-12 pt-2">

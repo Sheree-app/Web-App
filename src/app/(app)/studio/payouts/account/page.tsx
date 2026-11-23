@@ -12,19 +12,19 @@ import {
   TopBar,
 } from "@/components/ui";
 import {
-  fetchPayoutAccount,
-  fetchPayoutInstitutions,
   savePayoutAccount,
-  type PayoutAccount,
   type PayoutInstitution,
   type PayoutMethod,
 } from "@/features/account/payoutApi";
-import { useEffect, useState } from "react";
+import { usePayoutAccount, usePayoutInstitutions } from "@/features/account/payoutQueries";
+import { useState } from "react";
 
 const METHODS: Array<{ value: PayoutMethod; label: string; hint: string }> = [
   { value: "ghipss", label: "Bank account", hint: "Any Ghanaian bank via GhIPSS" },
   { value: "mobile_money", label: "Mobile money", hint: "MTN, Telecel or AirtelTigo" },
 ];
+
+const noInstitutions: PayoutInstitution[] = [];
 
 /**
  * Where the money goes.
@@ -33,52 +33,32 @@ const METHODS: Array<{ value: PayoutMethod; label: string; hint: string }> = [
  * so the names and codes always match what the payment provider expects.
  */
 export default function PayoutAccountPage() {
-  const [account, setAccount] = useState<PayoutAccount | null>(null);
+  // In memory only (`payout*` keys are never stored); a save writes it back.
+  const accountQuery = usePayoutAccount();
+  const account = accountQuery.data ?? null;
   const [method, setMethod] = useState<PayoutMethod>("mobile_money");
-  const [institutions, setInstitutions] = useState<PayoutInstitution[]>([]);
+  const institutions = usePayoutInstitutions(method).data ?? noInstitutions;
   const [institutionCode, setInstitutionCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    fetchPayoutAccount()
-      .then((next) => {
-        if (!active) return;
-        setAccount(next);
-        if (next.method) setMethod(next.method);
-        if (next.accountName) setAccountName(next.accountName);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+  // Start the form from the account the first time it's known.
+  const [seeded, setSeeded] = useState(false);
+  if (!seeded && account) {
+    setSeeded(true);
+    if (account.method) setMethod(account.method);
+    if (account.accountName) setAccountName(account.accountName);
+  }
 
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
+  const chooseMethod = (next: PayoutMethod) => {
+    if (next === method) return;
+    setMethod(next);
     setInstitutionCode("");
-    fetchPayoutInstitutions(method)
-      .then((next) => {
-        if (active) setInstitutions(next);
-      })
-      .catch(() => {
-        if (active) setInstitutions([]);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [method]);
+  };
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -102,14 +82,14 @@ export default function PayoutAccountPage() {
     setSaved(false);
 
     try {
-      const next = await savePayoutAccount({
+      // Writes the saved account into the cache too.
+      await savePayoutAccount({
         method,
         bankCode: institution.code,
         institutionName: institution.name,
         accountNumber: accountNumber.trim(),
         accountName: accountName.trim(),
       });
-      setAccount(next);
       setAccountNumber("");
       setSaved(true);
     } catch (cause) {
@@ -119,7 +99,7 @@ export default function PayoutAccountPage() {
     }
   };
 
-  if (loading) {
+  if (accountQuery.isLoading) {
     return (
       <div className="flex min-h-[50dvh] items-center justify-center">
         <Spinner label="Loading payout details" />
@@ -160,7 +140,7 @@ export default function PayoutAccountPage() {
                 key={option.value}
                 label={`${option.label} — ${option.hint}`}
                 selected={method === option.value}
-                onClick={() => setMethod(option.value)}
+                onClick={() => chooseMethod(option.value)}
               />
             ))}
           </div>

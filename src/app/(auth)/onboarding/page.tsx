@@ -1,5 +1,15 @@
 "use client";
 
+import { schedulePayload } from "@/features/calendar/api";
+import { CircleCheck } from "lucide-react";
+import {
+  BudgetStep,
+  LooksStep,
+  RoutineStep,
+  saveCustomerSetup,
+  setupSummary,
+  type Routine,
+} from "@/features/onboarding/CustomerSetupSteps";
 import { Button, Checkbox, FormError, Input, Spinner, Textarea } from "@/components/ui";
 import { categoryImage } from "@/features/explore/category-images";
 import { fetchExploreCategories } from "@/features/explore/api";
@@ -14,7 +24,18 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type Role = "customer" | "professional";
-type Step = "role" | "category" | "identity" | "story" | "service" | "hours" | "socials" | "done";
+type Step =
+  | "role"
+  | "category"
+  | "routine"
+  | "budget"
+  | "looks"
+  | "identity"
+  | "story"
+  | "service"
+  | "hours"
+  | "socials"
+  | "done";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 const DAY_NUMBERS: Record<(typeof DAYS)[number], number> = {
@@ -31,6 +52,9 @@ const DAY_NUMBERS: Record<(typeof DAYS)[number], number> = {
 const TITLES: Record<Step, string> = {
   role: "How would you like to use Sheree?",
   category: "What do you create?",
+  routine: "What do you keep up with?",
+  budget: "What’s your monthly beauty budget?",
+  looks: "Start your look diary",
   identity: "Name your corner of Sheree",
   story: "Let clients get to know you",
   service: "How do you work?",
@@ -42,6 +66,9 @@ const TITLES: Record<Step, string> = {
 const SUBTITLES: Record<Step, string> = {
   role: "Choose the experience that fits what you’re here to do.",
   category: "Choose every category that reflects your work.",
+  routine: "Pick what you get done regularly and we’ll remind you before it’s due.",
+  budget: "We’ll keep track as you go, so the end of the month is never a surprise.",
+  looks: "A private diary of every look you love. Only you can see it.",
   identity: "This is the first impression clients will see.",
   story: "The details that turn a profile into a place clients trust.",
   service: "Set clear expectations before a client books.",
@@ -60,7 +87,8 @@ const PROFESSIONAL_STEPS: Step[] = [
   "done",
 ];
 
-const CUSTOMER_STEPS: Step[] = ["category", "done"];
+/** Customers pick what they love, then three skippable steps that set up the Me page. */
+const CUSTOMER_STEPS: Step[] = ["category", "routine", "budget", "looks", "done"];
 
 /**
  * Onboarding, rebuilt from the app's wizard: the same role cards, the same step
@@ -88,6 +116,12 @@ export default function OnboardingPage() {
   const [closesAt, setClosesAt] = useState("18:00");
   const [instagram, setInstagram] = useState("");
   const [tiktok, setTikTok] = useState("");
+
+  const [routine, setRoutine] = useState<Routine>({});
+  const [budget, setBudget] = useState<number | null>(null);
+  const [budgetText, setBudgetText] = useState("");
+  const [firstLook, setFirstLook] = useState(false);
+  const [customerSummary, setCustomerSummary] = useState<string[]>([]);
 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -133,7 +167,17 @@ export default function OnboardingPage() {
         );
         return;
       }
-      advance(role === "professional" ? "identity" : "done");
+      advance(role === "professional" ? "identity" : "routine");
+      return;
+    }
+
+    if (step === "routine") {
+      advance("budget");
+      return;
+    }
+
+    if (step === "budget") {
+      advance("looks");
       return;
     }
 
@@ -161,6 +205,11 @@ export default function OnboardingPage() {
         setError("Pick at least one day you usually work.");
         return;
       }
+      // "HH:MM" compares correctly as text.
+      if (!(closesAt > opensAt)) {
+        setError("Your closing time needs to be after your opening time.");
+        return;
+      }
       advance("socials");
       return;
     }
@@ -178,7 +227,7 @@ export default function OnboardingPage() {
     setStep(previous === "category" && role === "customer" ? "role" : previous);
   };
 
-  const finish = async () => {
+  const finish = async (wantsFirstLook = false) => {
     if (!role) return;
 
     setSaving(true);
@@ -201,6 +250,9 @@ export default function OnboardingPage() {
         await api.post<void>("/v1/onboarding/customer", {
           body: trimmedPhone ? { phone: trimmedPhone } : {},
         });
+        // Best effort: the Me page cards let them finish any part later.
+        const saved = await saveCustomerSetup({ routine, budget });
+        setCustomerSummary(setupSummary(saved, wantsFirstLook));
       } else {
         // TODO(api): the deposit step has no effect any more; the server always
         // applies the platform deposit and `deposit` is not accepted.
@@ -224,7 +276,24 @@ export default function OnboardingPage() {
               : null,
             phone: trimmedPhone || null,
             location: null,
-            schedule: null,
+            // The bookable week from the hours step. The web wizard doesn't ask
+            // about breaks, buffers or approval, so the app's defaults apply.
+            schedule: schedulePayload({
+              preferences: {
+                maxAppointmentsPerDay: 6,
+                bufferMinutes: 15,
+                defaultDurationMinutes: 60,
+                approvalMode: "automatic",
+              },
+              hours: DAYS.map((day) => ({
+                dayOfWeek: DAY_NUMBERS[day],
+                opensAt,
+                closesAt,
+                isClosed: !openDays.includes(day),
+              })),
+              breaks: [],
+              blocks: [],
+            }),
           },
         });
       }
@@ -277,16 +346,32 @@ export default function OnboardingPage() {
               you’re ready.
             </p>
           ) : (
-            <p className="max-w-sm text-body text-muted">
-              Your lookbook is built. Fresh work from professionals you’ll love is waiting.
-            </p>
+            <>
+              <p className="max-w-sm text-body text-muted">
+                {customerSummary.length > 0
+                  ? "Here’s what’s waiting for you on your Me page:"
+                  : "Your lookbook is built. Fresh work from professionals you’ll love is waiting."}
+              </p>
+              {customerSummary.length > 0 ? (
+                <ul className="flex flex-col gap-2 text-left">
+                  {customerSummary.map((line) => (
+                    <li key={line} className="flex items-center gap-2 text-body text-ink">
+                      <CircleCheck aria-hidden className="size-[18px] shrink-0 text-primary" />
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
           )}
           <Button
             size="lg"
             className="mt-2 min-w-48"
-            onClick={() => router.replace(role === "professional" ? "/studio" : "/home")}
+            onClick={() =>
+              router.replace(role === "professional" ? "/studio" : firstLook ? "/looks/new" : "/home")
+            }
           >
-            {role === "professional" ? "Open my studio" : "Start browsing"}
+            {role === "professional" ? "Open my studio" : firstLook ? "Add my first look" : "Start browsing"}
           </Button>
         </div>
       ) : (
@@ -371,6 +456,17 @@ export default function OnboardingPage() {
                 </div>
               )
             ) : null}
+
+            {step === "routine" ? <RoutineStep value={routine} onChange={setRoutine} /> : null}
+            {step === "budget" ? (
+              <BudgetStep
+                value={budget}
+                custom={budgetText}
+                onChange={setBudget}
+                onCustomChange={setBudgetText}
+              />
+            ) : null}
+            {step === "looks" ? <LooksStep /> : null}
 
             {step === "identity" ? (
               <>
@@ -500,9 +596,57 @@ export default function OnboardingPage() {
 
           <div className="sticky bottom-0 mt-6 flex flex-col gap-3 border-t border-line/60 bg-background/95 py-4 pb-[calc(16px+env(safe-area-inset-bottom))] backdrop-blur-md">
             {error ? <FormError message={error} /> : null}
-            <Button size="lg" loading={saving} onClick={next}>
-              {step === "socials" ? "Finish setup" : "Continue"}
-            </Button>
+            {step === "looks" ? (
+              <>
+                <Button
+                  size="lg"
+                  loading={saving && firstLook}
+                  disabled={saving}
+                  onClick={() => {
+                    setFirstLook(true);
+                    void finish(true);
+                  }}
+                >
+                  Add my first look
+                </Button>
+                <Button
+                  size="lg"
+                  variant="ghost"
+                  loading={saving && !firstLook}
+                  disabled={saving}
+                  onClick={() => {
+                    setFirstLook(false);
+                    void finish(false);
+                  }}
+                >
+                  Maybe later
+                </Button>
+              </>
+            ) : (
+              <Button size="lg" loading={saving} onClick={next}>
+                {step === "socials" ? "Finish setup" : "Continue"}
+              </Button>
+            )}
+            {step === "routine" || step === "budget" ? (
+              <Button
+                size="lg"
+                variant="ghost"
+                disabled={saving}
+                onClick={() => {
+                  setError("");
+                  if (step === "routine") {
+                    setRoutine({});
+                    setStep("budget");
+                  } else {
+                    setBudget(null);
+                    setBudgetText("");
+                    setStep("looks");
+                  }
+                }}
+              >
+                Skip
+              </Button>
+            ) : null}
           </div>
         </>
       )}

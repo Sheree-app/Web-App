@@ -1,6 +1,12 @@
 import { api } from "@/lib/api";
 import { errorCode } from "@/lib/errors";
+import { setCached } from "@/lib/query-cache";
 import { defaultSchedule, type Schedule } from "./data";
+/** Cache keys (`useQuery`, `./queries.ts`); the cache is per signed-in pro. */
+export const SCHEDULE_KEY = "me:calendar:schedule";
+export const UPCOMING_KEY = "me:calendar:upcoming";
+export const BOOKING_REQUESTS_KEY = "me:calendar:requests";
+export const SCHEDULE_TTL = 5 * 60_000;
 export type BookingRequest = {
   id: string;
   bookingReference:string;
@@ -137,6 +143,7 @@ export function schedulePayload(schedule: Schedule) {
 export async function saveSchedule(schedule: Schedule) {
   // Replaces preferences, all 7 days, breaks and time off in one transaction.
   await api.put<Raw>("/v1/me/schedule", { body: schedulePayload(schedule) });
+  setCached(SCHEDULE_KEY, schedule, SCHEDULE_TTL);
 }
 // The API rejects an empty label; leaving it out gets its default ("Break" / "Unavailable").
 const label = (value: string | undefined) => (value?.trim() ? { label: value.trim().slice(0, 60) } : {});

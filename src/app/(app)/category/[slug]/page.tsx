@@ -1,12 +1,10 @@
 "use client";
 
 import { CardSkeleton, Skeleton } from "@/components/ui";
-import { fetchExploreCategories, fetchProfessionalsByCategory } from "@/features/explore/api";
-import type { Professional } from "@/features/explore/data";
+import { useCategoryProfessionals, useExploreCategories } from "@/features/explore/queries";
 import { ProfessionalTile } from "@/features/explore/ProfessionalTile";
 import { ArrowLeft } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
 import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 /**
@@ -18,31 +16,20 @@ export default function CategoryPage() {
   const router = useRouter();
   const slug = params.slug;
 
-  const [title, setTitle] = useState("Category");
-  const [items, setItems] = useState<Professional[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(false);
-    try {
-      const [categories, professionals] = await Promise.all([
-        fetchExploreCategories(),
-        fetchProfessionalsByCategory(slug),
-      ]);
-      setTitle(categories.find((category) => category.slug === slug)?.name ?? "Category");
-      setItems(professionals);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [slug]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Both cached: the trades are shared with Explore, and a hover on a trade
+  // there may already have loaded its professionals.
+  const categories = useExploreCategories();
+  const professionals = useCategoryProfessionals(slug);
+  const title = categories.data?.find((category) => category.slug === slug)?.name ?? "Category";
+  const items = professionals.data ?? [];
+  const loading = categories.isLoading || professionals.isLoading;
+  // Only an error with nothing cached to show is worth the error state.
+  const error =
+    Boolean(categories.error && !categories.data) || Boolean(professionals.error && !professionals.data);
+  const load = () => {
+    void categories.refetch();
+    void professionals.refetch();
+  };
 
   return (
     <div className="flex flex-col px-4 pb-[146px] pt-2">

@@ -1,16 +1,22 @@
 "use client";
 
 import { Avatar, Sheet, Skeleton, Spinner } from "@/components/ui";
+import { Wordmark } from "@/components/brand/wordmark";
+import { CustomerProfileCard } from "@/features/account/CustomerProfileCard";
 import { ModeSwitchCard } from "@/features/account/ModeSwitchCard";
+import { LooksSummaryCard } from "@/features/looks";
+import { SpendSummaryCard } from "@/features/spend";
+import { UpkeepSummaryCard } from "@/features/upkeep";
 import { FoundingBadge } from "@/features/badges/FoundingBadge";
 import { FoundingStatusCard } from "@/features/badges/FoundingStatusCard";
-import { fetchMyFoundingStatus, type MyFoundingStatus } from "@/features/badges/my-status";
+import { fetchMyFoundingStatus } from "@/features/badges/my-status";
+import { STALE } from "@/lib/query-cache";
+import { useQuery } from "@/lib/use-query";
+import { useAccountProfile } from "@/features/account/queries";
 import {
-  fetchAccountProfile,
   fetchOwnProfessionalId,
   saveProfessionalSocialLinks,
   uploadAccountAvatar,
-  type AccountProfile,
 } from "@/features/account/api";
 import { EMPTY_SOCIAL_LINKS, SOCIAL_PLATFORMS, socialUsername, type SocialPlatform } from "@/features/profile/socials";
 import { mediaAssetFromFile } from "@/lib/media";
@@ -18,7 +24,6 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
 import {
-  Bookmark,
   Bug,
   Calendar,
   Camera,
@@ -27,16 +32,17 @@ import {
   Images,
   LogOut,
   MapPin,
+  Menu,
   Pencil,
   PersonStanding,
   Settings as SettingsIcon,
   Share2,
-  Star,
   TrendingUp,
   Wallet,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 type Row = {
   icon: React.ReactNode;
@@ -46,19 +52,72 @@ type Row = {
 };
 
 /**
- * The profile tab, rebuilt from `AccountProfileScreen`: the same header, the
- * mode switch, the hero, then the same labelled sections — with the rows the
- * app shows for each role, and nothing else.
+ * The Me tab. Customers get the app's social-style layout: profile card,
+ * beauticians and their beauty content, with account rows behind the menu
+ * (`/menu`). Professionals keep the business profile.
  */
 export default function ProfilePage() {
+  const { role, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex min-h-[60dvh] items-center justify-center">
+        <Spinner label="Loading your profile" />
+      </div>
+    );
+  }
+  return role === "professional" ? <ProfessionalProfile /> : <CustomerMe />;
+}
+
+function CustomerMe() {
+  return (
+    <div className="flex flex-col px-4 pb-12 pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <h1>
+          <Wordmark size="sm" />
+        </h1>
+        <Link
+          href="/menu"
+          aria-label="Open menu"
+          className="flex size-11 items-center justify-center rounded-full bg-surface text-ink transition hover:bg-tint"
+        >
+          <Menu aria-hidden className="size-6" />
+        </Link>
+      </div>
+      <CustomerProfileCard />
+      {/* The space below the profile card is for the customer's beauty content. */}
+      <div className="mt-6 flex flex-col gap-4">
+        <UpkeepSummaryCard />
+        <LooksSummaryCard />
+        <SpendSummaryCard />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The professional profile, rebuilt from `AccountProfileScreen`: the same
+ * header, the mode switch, the hero, then the same labelled sections.
+ */
+function ProfessionalProfile() {
   const router = useRouter();
   const { success, error: showError } = useToast();
   const { user, role, refreshProfile } = useAuth();
 
-  const [account, setAccount] = useState<AccountProfile | null>(null);
-  const [professionalId, setProfessionalId] = useState<string | null>(null);
-  const [foundingStatus, setFoundingStatus] = useState<MyFoundingStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const accountRole = role === "professional" ? "professional" : "customer";
+  // Cached: a revisit paints at once and refreshes behind the scenes.
+  const accountQuery = useAccountProfile(accountRole);
+  const account = accountQuery.data ?? null;
+  const loading = accountQuery.isLoading;
+  const professionalId =
+    useQuery(accountRole === "professional" ? "me:professional-id" : null, () => fetchOwnProfessionalId(""), {
+      staleTime: STALE.long,
+    }).data ?? null;
+  // The detailed account experience comes from the founding-status route,
+  // never from the public boolean alone.
+  const foundingStatus =
+    useQuery(accountRole === "professional" ? "me:founding-status" : null, fetchMyFoundingStatus, {
+      staleTime: STALE.medium,
+    }).data ?? null;
   const [uploading, setUploading] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [socialsOpen, setSocialsOpen] = useState(false);
@@ -66,54 +125,25 @@ export default function ProfilePage() {
   const [savingSocials, setSavingSocials] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const accountRole = role === "professional" ? "professional" : "customer";
-
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-
-    Promise.all([
-      fetchAccountProfile(user.id, accountRole, user.email ?? ""),
-      accountRole === "professional"
-        ? fetchOwnProfessionalId(user.id).catch(() => null)
-        : Promise.resolve(null),
-      // The detailed account experience comes from `get_my_founding_status`,
-      // never from the public boolean alone.
-      accountRole === "professional"
-        ? fetchMyFoundingStatus().catch(() => null)
-        : Promise.resolve(null),
-    ])
-      .then(([nextAccount, nextProfessionalId, nextFounding]) => {
-        if (!active) return;
-        setAccount(nextAccount);
-        setProfessionalId(nextProfessionalId);
-        setFoundingStatus(nextFounding);
-        setDraft(
-          Object.fromEntries(
-            Object.entries(nextAccount.socials).map(([key, value]) => [
-              key,
-              socialUsername(value as string | null),
-            ]),
-          ),
-        );
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [accountRole, user]);
+  /** Opens the socials sheet with the saved links filled in. */
+  const openSocials = () => {
+    if (account) {
+      setDraft(
+        Object.fromEntries(
+          Object.entries(account.socials).map(([key, value]) => [key, socialUsername(value as string | null)]),
+        ),
+      );
+    }
+    setSocialsOpen(true);
+  };
 
   const pickAvatar = async (file: File) => {
     if (!user) return;
     setUploading(true);
     try {
       const asset = await mediaAssetFromFile(file);
-      const url = await uploadAccountAvatar(user.id, accountRole, asset);
-      setAccount((current) => (current ? { ...current, avatar: url ?? current.avatar } : current));
+      // Updates the cached profile, which re-renders this page.
+      await uploadAccountAvatar(user.id, accountRole, asset);
       await refreshProfile();
     } catch (cause) {
       showError(
@@ -129,11 +159,8 @@ export default function ProfilePage() {
     if (!user) return;
     setSavingSocials(true);
     try {
-      const socials = await saveProfessionalSocialLinks(
-        user.id,
-        draft as Record<SocialPlatform, string>,
-      );
-      setAccount((current) => (current ? { ...current, socials } : current));
+      // Updates the cached profile too.
+      await saveProfessionalSocialLinks(user.id, draft as Record<SocialPlatform, string>);
       setSocialsOpen(false);
       success("Social links saved");
     } catch (cause) {
@@ -158,7 +185,7 @@ export default function ProfilePage() {
                 icon: <Share2 aria-hidden className="size-5 text-primary" />,
                 title: "Social links",
                 detail: "Send clients straight to your profiles",
-                onPress: () => setSocialsOpen(true),
+                onPress: openSocials,
               },
               {
                 icon: <Eye aria-hidden className="size-5 text-primary" />,
@@ -209,25 +236,7 @@ export default function ProfilePage() {
             ],
           },
         ]
-      : [
-          {
-            label: "Profile & preferences",
-            items: [
-              {
-                icon: <Bookmark aria-hidden className="size-5 text-primary" />,
-                title: "Saved looks",
-                detail: "Professionals and work you love",
-                onPress: () => router.push("/bookmarks"),
-              },
-              {
-                icon: <Star aria-hidden className="size-5 text-primary" />,
-                title: "My reviews",
-                detail: "The experiences you’ve shared",
-                onPress: () => router.push("/reviews"),
-              },
-            ],
-          },
-        ];
+      : [];
 
   return (
     <div className="flex flex-col px-4 pb-12 pt-4">

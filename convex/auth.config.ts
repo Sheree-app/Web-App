@@ -36,6 +36,12 @@ const issuer = supabaseUrl
   ? `${supabaseUrl}/auth/v1`
   : 'https://supabase-url-not-set.invalid/auth/v1';
 
+const SHEREE_API_JWKS = 'https://sheree-backend-production.up.railway.app/.well-known/jwks.json';
+const SHEREE_API_ISSUERS = [
+  'https://sheree-backend-production.up.railway.app',
+  'https://api.staging.sheree.test',
+];
+
 export default {
   providers: [
     {
@@ -52,5 +58,18 @@ export default {
       // documented as often insecure, so it is set explicitly.
       applicationID: 'authenticated',
     },
+    // The Sheree API (sheree-backend) issues Convex tokens from
+    // `POST /v1/auth/convex-token`: ES256, audience `convex`, `sub` = the same
+    // user UUID as Supabase, so messaging identities don't change. Both staging
+    // backends (Railway and a local `start:staging`) sign with the same key and
+    // differ only in `iss`; Convex fetches the keys from Railway because it
+    // can't reach a laptop. Production gets its own entry at cutover.
+    ...SHEREE_API_ISSUERS.map((apiIssuer) => ({
+      type: 'customJwt' as const,
+      issuer: apiIssuer,
+      jwks: `${SHEREE_API_JWKS}?v=1`,
+      algorithm: 'ES256' as const,
+      applicationID: 'convex',
+    })),
   ],
 } satisfies AuthConfig;

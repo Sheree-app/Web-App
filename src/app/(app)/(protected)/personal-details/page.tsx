@@ -1,13 +1,13 @@
 "use client";
 
 import { updateAccountProfile } from "@/features/account/api";
-import { fetchAccount } from "@/features/auth/api";
+import { useAccountDetails } from "@/features/account/queries";
 import { userMessage } from "@/lib/errors";
 import { useAuth } from "@/providers/auth-provider";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 /**
  * Personal details, matching the original screen: username and phone are
@@ -19,19 +19,13 @@ export default function PersonalDetailsPage() {
   const { user, refreshProfile } = useAuth();
   const { error: showError } = useToast();
 
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  // Cached `/v1/me` fills the fields until she types (null = untouched).
+  const { data: account } = useAccountDetails();
+  const [editedName, setName] = useState<string | null>(null);
+  const [editedPhone, setPhone] = useState<string | null>(null);
+  const name = editedName ?? account?.username ?? "";
+  const phone = editedPhone ?? account?.phone ?? "";
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!user) return;
-    void fetchAccount()
-      .then((account) => {
-        setName(account.username ?? "");
-        setPhone(account.phone ?? "");
-      })
-      .catch(() => undefined);
-  }, [user]);
 
   const save = async () => {
     if (!user) return;

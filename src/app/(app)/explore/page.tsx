@@ -3,13 +3,14 @@
 import { CardSkeleton, Sheet, Skeleton } from "@/components/ui";
 import { categoryImage } from "@/features/explore/category-images";
 import {
-  fetchExploreCategories,
-  fetchExploreProfessionals,
-  fetchMapProfessionals,
-  fetchNearbyProfessionals,
-} from "@/features/explore/api";
+  prefetchCategoryProfessionals,
+  useExploreCategories,
+  useExploreProfessionals,
+  useMapProfessionals,
+  useNearbyProfessionals,
+} from "@/features/explore/queries";
 import { ExploreMap, GHANA } from "@/features/explore/ExploreMap";
-import { collections, type Category, type Professional } from "@/features/explore/data";
+import { collections, type Professional } from "@/features/explore/data";
 import { ProfessionalTile } from "@/features/explore/ProfessionalTile";
 import { cn } from "@/lib/utils";
 import {
@@ -31,7 +32,7 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { AppPromoBar } from "@/features/app-promo/AppPromo";
 
 /** A 400-metre ring — about a five-minute walk. */
@@ -47,6 +48,8 @@ const MOOD_ICONS: Record<string, ComponentType<{ className?: string }>> = {
 
 type NearbyState = "loading" | "ready" | "denied" | "error";
 
+const EMPTY: never[] = [];
+
 /**
  * Explore, rebuilt from the original tab.
  *
@@ -58,86 +61,76 @@ type NearbyState = "loading" | "ready" | "denied" | "error";
 export default function ExplorePage() {
   const router = useRouter();
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [professionals, setProfessionals] = useState<Professional[]>([]);
-  const [nearby, setNearby] = useState<Professional[]>([]);
-  const [nearbyState, setNearbyState] = useState<NearbyState>("loading");
   const [showMap, setShowMap] = useState(false);
-  const [mapProfessionals, setMapProfessionals] = useState<Professional[]>([]);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(
     null,
   );
-  /** Set once results ranked from the user's position arrive; they win over the Ghana fallback. */
-  const locatedMap = useRef(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [geoState, setGeoState] = useState<"locating" | "located" | "denied">("locating");
   const [moodTitle, setMoodTitle] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [nextCategories, nextProfessionals] = await Promise.all([
-        fetchExploreCategories(),
-        fetchExploreProfessionals(),
-      ]);
-      setCategories(nextCategories);
-      setProfessionals(nextProfessionals);
-      // The map has its own result set. Until location is known it is ranked
-      // from the centre of Ghana, as on mobile; a failure leaves it empty
-      // rather than failing the whole page.
-      fetchMapProfessionals(GHANA.latitude, GHANA.longitude, 500)
-        .then((pinned) => {
-          if (!locatedMap.current) setMapProfessionals(pinned);
-        })
-        .catch(() => undefined);
-    } catch {
-      setError("Check your connection, then try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // All cached: a revisit paints at once and refreshes behind it.
+  const categoriesQuery = useExploreCategories();
+  const professionalsQuery = useExploreProfessionals();
+  const categories = categoriesQuery.data ?? EMPTY;
+  const professionals = professionalsQuery.data ?? EMPTY;
+  const loading = categoriesQuery.isLoading || professionalsQuery.isLoading;
+  // Only an error with nothing cached to show is worth the error state.
+  const error =
+    (categoriesQuery.error && !categoriesQuery.data) || (professionalsQuery.error && !professionalsQuery.data)
+      ? "Check your connection, then try again."
+      : null;
+  const load = () => {
+    void categoriesQuery.refetch();
+    void professionalsQuery.refetch();
+  };
 
-  const loadNearby = useCallback(async () => {
+  // The map has its own result set. Until location is known it is ranked from
+  // the centre of Ghana, as on mobile; results ranked from the user's position
+  // win once they arrive. A failure leaves it empty rather than failing the page.
+  const ghanaMap = useMapProfessionals(GHANA);
+  const locatedMap = useMapProfessionals(userLocation);
+  const mapProfessionals = locatedMap.data ?? ghanaMap.data ?? EMPTY;
+
+  const nearbyQuery = useNearbyProfessionals(userLocation, NEARBY_RADIUS_METRES);
+  const nearby = nearbyQuery.data ?? EMPTY;
+  const nearbyState: NearbyState =
+    geoState === "denied"
+      ? "denied"
+      : nearbyQuery.data
+        ? "ready"
+        : nearbyQuery.error
+          ? "error"
+          : "loading";
+
+  const locate = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setNearbyState("denied");
+      setGeoState("denied");
       return;
     }
-    setNearbyState("loading");
+    setGeoState("locating");
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const coords = {
+      (position) => {
+        setUserLocation({
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
-        };
-        setUserLocation(coords);
-        try {
-          const [results, pinned] = await Promise.all([
-            fetchNearbyProfessionals(
-              coords.latitude,
-              coords.longitude,
-              NEARBY_RADIUS_METRES,
-              20,
-            ),
-            fetchMapProfessionals(coords.latitude, coords.longitude, 500),
-          ]);
-          setNearby(results);
-          locatedMap.current = true;
-          setMapProfessionals(pinned);
-          setNearbyState("ready");
-        } catch {
-          setNearbyState("error");
-        }
+        });
+        setGeoState("located");
       },
-      () => setNearbyState("denied"),
+      () => setGeoState("denied"),
       { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
     );
   }, []);
 
+  const loadNearby = () => {
+    if (geoState === "located") {
+      void nearbyQuery.refetch();
+      void locatedMap.refetch();
+    } else locate();
+  };
+
   useEffect(() => {
-    void load();
-    void loadNearby();
-  }, [load, loadNearby]);
+    locate();
+  }, [locate]);
 
   const ready = !loading && !error;
 
@@ -212,7 +205,7 @@ export default function ExplorePage() {
           icon={<CloudOff aria-hidden className="size-7 text-primary" />}
           title="Explore couldn’t refresh"
           body={error}
-          onRetry={() => void load()}
+          onRetry={load}
         />
       ) : null}
 
@@ -240,6 +233,9 @@ export default function ExplorePage() {
                     <Link
                       key={category.id}
                       href={`/category/${category.slug}`}
+                      onPointerEnter={() => prefetchCategoryProfessionals(category.slug)}
+                      onFocus={() => prefetchCategoryProfessionals(category.slug)}
+                      onTouchStart={() => prefetchCategoryProfessionals(category.slug)}
                       className="w-[144px] overflow-hidden rounded-card"
                     >
                       <span className="relative block h-[128px] w-full bg-secondary">

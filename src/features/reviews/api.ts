@@ -1,5 +1,10 @@
 import { api } from "@/lib/api";
+import { CREATOR_PROFILE_PREFIX } from "@/features/profile/api";
 import { AppError, errorCode, withServerMessage } from "@/lib/errors";
+import { invalidateCachedPrefix } from "@/lib/query-cache";
+
+/** Cache key for her reviews (shared with the Me page's Reviews count). */
+export const MY_REVIEWS_KEY = "me:reviews";
 
 /**
  * Reviews through the Sheree API (`sheree-backend/docs/api/reviews.md`). The
@@ -133,6 +138,9 @@ export async function fetchPendingReview(_userId: string, _now = Date.now()): Pr
 export async function submitBookingReview(bookingId: string, rating: number, body: string) {
   try {
     await api.post<ReviewRow>("/v1/reviews", { body: { booking_id: bookingId, rating, body: body.trim() } });
+    // Her list and count, and the professional's rating and reviews.
+    invalidateCachedPrefix(MY_REVIEWS_KEY);
+    invalidateCachedPrefix(CREATOR_PROFILE_PREFIX);
   } catch (error) {
     if (errorCode(error) === "already_reviewed")
       throw new AppError("You’ve already reviewed this appointment.", "already_reviewed");

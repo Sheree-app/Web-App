@@ -11,11 +11,13 @@ import {
   Textarea,
   TopBar,
 } from "@/components/ui";
-import { createReview, fetchReviewContext, type ReviewContext } from "@/features/reviews/api";
+import { invalidateBookingViews } from "@/features/booking/api";
+import { useReviewContext } from "@/features/booking/queries";
+import { createReview } from "@/features/reviews/api";
 import { cn, formatDay } from "@/lib/utils";
 import { Star } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const RATING_LABELS: Record<number, string> = {
   1: "Not what was promised",
@@ -36,38 +38,31 @@ export default function ReviewPage() {
   const params = useParams<{ bookingId: string }>();
   const bookingId = params.bookingId;
 
-  const [context, setContext] = useState<ReviewContext | null>(null);
+  const contextQuery = useReviewContext(bookingId);
+  const context = contextQuery.data ?? null;
+  const loading = contextQuery.isLoading;
   const [rating, setRating] = useState(0);
   const [body, setBody] = useState("");
-  const [loading, setLoading] = useState(true);
+  // Her existing review fills the (read-only) form when it arrives (also when
+  // a background refresh finds one the cached copy didn't have).
+  const [seeded, setSeeded] = useState<ReturnType<typeof useReviewContext>["data"]>(undefined);
+  if (context && (!seeded || (!seeded.existingReview && context.existingReview))) {
+    setSeeded(context);
+    if (context.existingReview) {
+      setRating(context.existingReview.rating);
+      setBody(context.existingReview.body);
+    }
+  }
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    fetchReviewContext(bookingId)
-      .then((next) => {
-        if (!active) return;
-        setContext(next);
-        if (next.existingReview) {
-          setRating(next.existingReview.rating);
-          setBody(next.existingReview.body);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (active) {
-          setError(cause instanceof Error ? cause.message : "This review isn’t available.");
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [bookingId]);
+  const loadError =
+    contextQuery.error && !context
+      ? contextQuery.error instanceof Error
+        ? contextQuery.error.message
+        : "This review isn’t available."
+      : null;
 
   const submit = async () => {
     if (!context || rating < 1) {
@@ -78,6 +73,8 @@ export default function ReviewPage() {
     setError(null);
     try {
       await createReview(context, rating, body.trim());
+      // The booking now reads as reviewed; her reviews and prompts move too.
+      invalidateBookingViews();
       setDone(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That review couldn’t be saved.");
@@ -105,11 +102,11 @@ export default function ReviewPage() {
     );
   }
 
-  if (error && !context) {
+  if ((error || loadError) && !context) {
     return (
       <div className="flex flex-col gap-4">
         <TopBar title="Review" backTo="/bookings" />
-        <ErrorState message={error} onRetry={() => window.location.reload()} />
+        <ErrorState message={error ?? loadError ?? ""} onRetry={() => void contextQuery.refetch()} />
       </div>
     );
   }

@@ -2,12 +2,14 @@
 
 import { CardSkeleton, EmptyState, ErrorState } from "@/components/ui";
 import { FeedCard } from "@/features/feed/FeedCard";
-import { fetchSavedFeed } from "@/features/feed/api";
+import { seedPostDetail, useSavedPosts } from "@/features/feed/queries";
 import type { FeedPost } from "@/features/feed/types";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { AppPromoBar } from "@/features/app-promo/AppPromo";
+
+const NO_POSTS: FeedPost[] = [];
 
 /**
  * Saved looks, ported from the bookmarks screen: a category rail built from
@@ -16,10 +18,13 @@ import { AppPromoBar } from "@/features/app-promo/AppPromo";
  */
 export default function BookmarksPage() {
   const router = useRouter();
-  const [posts, setPosts] = useState<FeedPost[]>([]);
   const [category, setCategory] = useState("All");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  // Cached: a revisit paints at once, and a save or unsave elsewhere refreshes it.
+  const saved = useSavedPosts();
+  const posts = saved.data?.items ?? NO_POSTS;
+  const loading = !saved.data && !saved.error;
+  // Only an error with nothing cached to show is worth the error state.
+  const error = Boolean(saved.error && !saved.data);
 
   const categories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -34,16 +39,7 @@ export default function BookmarksPage() {
     [category, posts],
   );
 
-  const load = () => {
-    setError(false);
-    setLoading(true);
-    fetchSavedFeed()
-      .then((page) => setPosts(page.items))
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
+  const load = () => void saved.refetch();
 
   useEffect(() => {
     if (category !== "All" && !categories.some((item) => item.name === category)) {
@@ -124,7 +120,10 @@ export default function BookmarksPage() {
               <FeedCard
                 key={post.id}
                 post={post}
-                onOpen={(item) => router.push(`/post/${item.slug ?? item.id}`)}
+                onOpen={(item) => {
+                  seedPostDetail(item);
+                  router.push(`/post/${item.slug ?? item.id}`);
+                }}
                 onCreator={(item) => router.push(`/professional/${item.professionalId}`)}
               />
             ))}

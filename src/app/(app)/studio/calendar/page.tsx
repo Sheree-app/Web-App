@@ -3,13 +3,14 @@
 import { userMessage } from "@/lib/errors";
 import { ConfirmDialog, Sheet, Skeleton, Spinner } from "@/components/ui";
 import {
-  fetchBookingRequests,
-  fetchSchedule,
-  fetchUpcomingAppointments,
+  BOOKING_REQUESTS_KEY,
   saveSchedule,
+  UPCOMING_KEY,
   type BookingRequest,
   type CalendarAppointment,
 } from "@/features/calendar/api";
+import { useBookingRequests, useSchedule, useUpcomingAppointments } from "@/features/calendar/queries";
+import { updateQueryData } from "@/lib/use-query";
 import { dayNames, defaultSchedule, isoDate, type Schedule } from "@/features/calendar/data";
 import { manageBooking } from "@/features/dashboard/api";
 import { useToast } from "@/providers/toast-provider";
@@ -84,6 +85,9 @@ const longDateTime = (value: string) =>
     month: "long",
   })} · ${clock(value)}`;
 
+const noRequests: BookingRequest[] = [];
+const noAppointments: CalendarAppointment[] = [];
+
 /**
  * The calendar, rebuilt from `CalendarScreen`: the studio rhythm header with
  * Manage availability, the overview strip, the request queue, the week/month
@@ -93,10 +97,19 @@ const longDateTime = (value: string) =>
 export default function StudioCalendarPage() {
   const { toast, error: showError } = useToast();
 
-  const [schedule, setSchedule] = useState<Schedule>(defaultSchedule);
-  const [requests, setRequests] = useState<BookingRequest[]>([]);
-  const [appointments, setAppointments] = useState<CalendarAppointment[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cached: a revisit paints the last diary at once and refreshes behind it.
+  const scheduleQuery = useSchedule();
+  const requestsQuery = useBookingRequests();
+  const appointmentsQuery = useUpcomingAppointments();
+  const schedule = scheduleQuery.data ?? defaultSchedule;
+  const requests = requestsQuery.data ?? noRequests;
+  const appointments = appointmentsQuery.data ?? noAppointments;
+  const loading = scheduleQuery.isLoading || requestsQuery.isLoading || appointmentsQuery.isLoading;
+  // Edits to the cached lists show at once; `manageBooking` then refetches them.
+  const setRequests = (change: (current: BookingRequest[]) => BookingRequest[]) =>
+    updateQueryData(BOOKING_REQUESTS_KEY, change);
+  const setAppointments = (change: (current: CalendarAppointment[]) => CalendarAppointment[]) =>
+    updateQueryData(UPCOMING_KEY, change);
   const [saving, setSaving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mode, setMode] = useState<"week" | "month">("week");
@@ -108,28 +121,20 @@ export default function StudioCalendarPage() {
     { item: CalendarAppointment; action: "cancel" | "complete" } | null
   >(null);
 
-  const load = async () => {
-    try {
-      const [nextSchedule, nextRequests, nextAppointments] = await Promise.all([
-        fetchSchedule(),
-        fetchBookingRequests(),
-        fetchUpcomingAppointments(),
-      ]);
-      setSchedule(nextSchedule);
-      setRequests(nextRequests);
-      setAppointments(nextAppointments);
-    } catch {
-      showError("Could not refresh", "Check your connection and try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Only a load with nothing cached to show is worth a toast.
+  const loadFailed = Boolean(
+    (scheduleQuery.error && !scheduleQuery.data) ||
+      (requestsQuery.error && !requestsQuery.data) ||
+      (appointmentsQuery.error && !appointmentsQuery.data),
+  );
+  useEffect(() => {
+    if (loadFailed) showError("Could not refresh", "Check your connection and try again.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadFailed]);
 
   useEffect(() => {
-    void load();
     // The planner needs "today", which is not known until after mount.
     setCursor(new Date());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRequest = async (item: BookingRequest, action: "confirm" | "cancel") => {
@@ -169,8 +174,8 @@ export default function StudioCalendarPage() {
   const persist = async (next: Schedule) => {
     setSaving(true);
     try {
+      // Writes the saved schedule into the cache too.
       await saveSchedule(next);
-      setSchedule(next);
       setSettingsOpen(false);
       toast("Availability saved", { tone: "success", detail: "Your booking rules are live." });
     } catch (cause) {

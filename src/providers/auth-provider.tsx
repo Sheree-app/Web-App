@@ -2,6 +2,9 @@
 
 import { exchangeSupabaseSession, fetchAccount } from "@/features/auth/api";
 import { api, isApiError, type ApiUser, type TokenResponse } from "@/lib/api";
+import { SESSION_STORAGE_KEY } from "@/lib/api/browser-token-store";
+// Wires the data cache to the session (restore for this person, wipe on sign-out).
+import "@/lib/query-cache";
 import { isNetworkError, isSessionExpired, reportError } from "@/lib/errors";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase/client";
 import type { UserRole } from "@/types/database";
@@ -10,6 +13,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -105,6 +109,17 @@ function readCachedProfile(id: string): CachedProfile | null {
       ...parsed,
       appMode: parsed.appMode === "professional" ? "professional" : "customer",
     };
+  } catch {
+    return null;
+  }
+}
+
+/** The user id in the API client's stored session, read synchronously. */
+function storedSessionUserId(): string | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    const id = raw ? (JSON.parse(raw) as { user?: { id?: unknown } }).user?.id : null;
+    return typeof id === "string" ? id : null;
   } catch {
     return null;
   }
@@ -268,6 +283,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [applyProfile],
   );
 
+  // Before the first paint after hydration: who was signed in last time, read
+  // straight from storage (the API client reads it asynchronously). With the
+  // user known at once, every cached query paints immediately on a reload
+  // instead of waiting a tick for the session. The async check below confirms
+  // it, or clears it if the login has ended.
+  useLayoutEffect(() => {
+    const id = storedSessionUserId();
+    if (!id || sessionRef.current) return;
+    const cached = readCachedProfile(id);
+    applySession({ user: { id, email: cached?.email ?? null } });
+    if (cached) {
+      applyProfile({ ...cached, appMode: modeFor(cached.role, readStored(modeKey(id))) });
+      setLoading(false);
+    }
+  }, [applyProfile, applySession]);
+
   useEffect(() => {
     let active = true;
     // The API client says when a login ends on its own (refresh refused,
@@ -301,6 +332,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
         user = null;
       }
       if (!user) {
+        // The optimistic session from storage didn't hold up (expired).
+        if (sessionRef.current) clear();
         setLoading(false);
         return;
       }

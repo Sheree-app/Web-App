@@ -5,16 +5,18 @@ import {
   addStudioPhoto,
   deleteProfessionalPost,
   deleteStudioPhoto,
-  getProfessionalPosts,
-  getStudioPhotos,
+  OWN_POSTS_KEY,
+  STUDIO_PHOTOS_KEY,
   type ProfessionalPost,
   type StudioPhoto,
 } from "@/features/feed/upload";
+import { useOwnPosts, useStudioPhotos } from "@/features/feed/upload-queries";
+import { updateQueryData } from "@/lib/use-query";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft, CloudOff, Images, Plus, Store, Trash2 } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 type Tab = "work" | "studio";
 
@@ -34,6 +36,9 @@ function measure(file: File) {
   });
 }
 
+const noPosts: ProfessionalPost[] = [];
+const noPhotos: StudioPhoto[] = [];
+
 /**
  * Photos, rebuilt from `ProfessionalPostsScreen`: the header with its single
  * add control, the Work/Studio tabs, the posted list with its delete rows and
@@ -43,34 +48,26 @@ export default function StudioPortfolioPage() {
   const router = useRouter();
   const { toast, error: showError } = useToast();
 
-  const [posts, setPosts] = useState<ProfessionalPost[]>([]);
-  const [studio, setStudio] = useState<StudioPhoto[]>([]);
+  // Cached: a revisit paints the grid at once and refreshes behind it.
+  const postsQuery = useOwnPosts();
+  const studioQuery = useStudioPhotos();
+  const posts = postsQuery.data ?? noPosts;
+  const studio = studioQuery.data ?? noPhotos;
+  const loading = postsQuery.isLoading || studioQuery.isLoading;
+  const error = Boolean((postsQuery.error && !postsQuery.data) || (studioQuery.error && !studioQuery.data));
+  // Edits show at once; each write also refetches the list.
+  const setPosts = (change: (current: ProfessionalPost[]) => ProfessionalPost[]) =>
+    updateQueryData(OWN_POSTS_KEY, change);
+  const setStudio = (change: (current: StudioPhoto[]) => StudioPhoto[]) =>
+    updateQueryData(STUDIO_PHOTOS_KEY, change);
   const [tab, setTab] = useState<Tab>("work");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingPost, setPendingPost] = useState<ProfessionalPost | null>(null);
   const [pendingPhoto, setPendingPhoto] = useState<StudioPhoto | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(async () => {
-    setError(false);
-    setLoading(true);
-    try {
-      const [nextPosts, nextStudio] = await Promise.all([getProfessionalPosts(), getStudioPhotos()]);
-      setPosts(nextPosts);
-      setStudio(nextStudio);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const load = () => Promise.all([postsQuery.refetch(), studioQuery.refetch()]);
 
   const remove = async (post: ProfessionalPost) => {
     setDeletingId(post.id);
@@ -127,7 +124,12 @@ export default function StudioPortfolioPage() {
           failed += 1;
         }
       }
-      if (added.length) setStudio((current) => [...current, ...added]);
+      // A refetch may already hold some of them.
+      if (added.length)
+        setStudio((current) => [
+          ...current.filter((item) => !added.some((photo) => photo.id === item.id)),
+          ...added,
+        ]);
       if (failed) {
         showError(
           added.length ? "Some photos were not added" : "Photos not added",

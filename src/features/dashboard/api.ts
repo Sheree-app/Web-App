@@ -1,5 +1,20 @@
 import { api } from "@/lib/api";
 import { errorCode, withServerMessage } from "@/lib/errors";
+import { invalidateCached } from "@/lib/query-cache";
+import { BOOKING_REQUESTS_KEY, UPCOMING_KEY } from "@/features/calendar/api";
+import { PAYOUTS_KEY } from "@/features/account/payoutsApi";
+/** Cache keys (`useQuery`, `./queries.ts`); the cache is per signed-in pro. */
+export const DASHBOARD_KEY = "me:dashboard";
+/**
+ * Every studio view of her bookings: the dashboard, the calendar's upcoming
+ * diary and request queue, and payouts (a completion books one).
+ */
+export function invalidateBookingQueries() {
+  invalidateCached(DASHBOARD_KEY);
+  invalidateCached(UPCOMING_KEY);
+  invalidateCached(BOOKING_REQUESTS_KEY);
+  invalidateCached(PAYOUTS_KEY);
+}
 export class PayoutAccountRequiredError extends Error {
   constructor() {
     super("Set up a payout account before completing this appointment.");
@@ -76,10 +91,12 @@ export async function manageBooking(
   reason?: string,
 ) {
   try {
-    return await api.post<{ status: string; refund: string | null; payout?: string | null; refundAmount?: number; professionalCompensation?: number; shereeFeeRefunded?: number; warning?: string; supportCode?: string }>(
+    const result = await api.post<{ status: string; refund: string | null; payout?: string | null; refundAmount?: number; professionalCompensation?: number; shereeFeeRefunded?: number; warning?: string; supportCode?: string }>(
       `/v1/me/professional/bookings/${encodeURIComponent(bookingId)}/${action}`,
       action === "cancel" ? { body: reason ? { reason } : {} } : {},
     );
+    invalidateBookingQueries();
+    return result;
   } catch (error) {
     // The API records the payout as processing even without an account today;
     // kept so the studio's payout-setup prompt still works if that changes.

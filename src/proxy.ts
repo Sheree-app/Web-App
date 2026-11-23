@@ -26,6 +26,8 @@ const PROTECTED_PREFIXES = [
   "/bookmarks",
   "/notifications",
   "/settings",
+  "/menu",
+  "/beauticians",
   "/change-password",
   "/personal-details",
   "/location",
@@ -38,6 +40,9 @@ const PROTECTED_PREFIXES = [
   "/studio",
   "/onboarding",
   "/mode-transition",
+  "/spend",
+  "/looks",
+  "/upkeep",
 ];
 
 const AUTH_ROUTES = ["/sign-in", "/sign-up", "/forgot-password"];

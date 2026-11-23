@@ -4,16 +4,22 @@ import { Spinner } from "@/components/ui";
 import {
   fetchNotifications,
   markAllNotificationsRead,
+  notificationsKey,
+  unreadCountKey,
   markNotificationOpened,
   markNotificationRead,
   notificationDestination,
+  NOTIFICATIONS_PREFIX,
   recordAppOpen,
   type AppNotification,
   type NotificationCursor,
 } from "@/features/notifications/api";
+import { useNotifications } from "@/features/notifications/queries";
+import { invalidateQueries, setQueryData, updateQueryData } from "@/lib/use-query";
+import { STALE } from "@/lib/query-cache";
 import { useAuth } from "@/providers/auth-provider";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 type Tab = "all" | "attention" | "activity" | "updates";
 
@@ -25,6 +31,8 @@ const TAB_LABELS: Record<Tab, string> = {
 };
 
 const TAB_ORDER: Tab[] = ["all", "attention", "activity", "updates"];
+
+const NO_ITEMS: AppNotification[] = [];
 
 /** Which tab each notification kind belongs to, as the app defines it. */
 const CATEGORY_BY_KIND: Record<AppNotification["kind"], Exclude<Tab, "all">> = {
@@ -67,53 +75,69 @@ export default function NotificationsPage() {
   const { appMode, signedIn } = useAuth();
   const professional = appMode === "professional";
 
-  const [items, setItems] = useState<AppNotification[]>([]);
-  const [cursor, setCursor] = useState<NotificationCursor | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("all");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  // The first page is cached (instant on a revisit, refreshed behind it); older
+  // pages stay here and are dropped when the first page changes.
+  const first = useNotifications(appMode);
+  const firstItems = first.data?.items;
+  const base = `${appMode}:${firstItems?.map((item) => item.id).join(",") ?? ""}`;
+  const [older, setOlder] = useState<{
+    base: string;
+    items: AppNotification[];
+    cursor: NotificationCursor | null;
+  } | null>(null);
+  const extra = older?.base === base ? older : null;
+  const items = firstItems ? (extra ? [...firstItems, ...extra.items] : firstItems) : NO_ITEMS;
+  const cursor = extra ? extra.cursor : (first.data?.nextCursor ?? null);
+  const loading = !first.data && !first.error;
+  // Only an error with nothing cached to show is worth the error state.
+  const error = Boolean(first.error && !first.data);
 
-  const load = useCallback(
-    async (reset = false) => {
-      try {
-        const page = await fetchNotifications(appMode, reset ? null : cursor, 30);
-        setItems((current) => (reset ? page.items : [...current, ...page.items]));
-        setCursor(page.nextCursor);
-        setError(false);
-      } catch {
-        setError(true);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [appMode, cursor],
-  );
+  const load = async (reset = false) => {
+    if (reset || !cursor) {
+      await first.refetch();
+      return;
+    }
+    try {
+      const page = await fetchNotifications(appMode, cursor, 30);
+      setOlder({ base, items: [...(extra?.items ?? []), ...page.items], cursor: page.nextCursor });
+    } catch {
+      /* The button stays, so the reader can try again. */
+    }
+  };
 
   useEffect(() => {
     if (!signedIn) return;
-    void load(true);
     void recordAppOpen(appMode).catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appMode, signedIn]);
+
+  /** Marks items read here, in the cached first page and in the bell's count. */
+  const markReadLocally = (match: (item: AppNotification) => boolean) => {
+    const at = new Date().toISOString();
+    const mark = (list: AppNotification[]) =>
+      list.map((entry) => (match(entry) && !entry.readAt ? { ...entry, readAt: at } : entry));
+    updateQueryData<{ items: AppNotification[]; nextCursor: NotificationCursor | null }>(
+      notificationsKey(appMode),
+      (page) => ({ ...page, items: mark(page.items) }),
+    );
+    setOlder((current) => (current ? { ...current, items: mark(current.items) } : current));
+  };
 
   const open = async (item: AppNotification) => {
     if (!item.readAt) {
-      setItems((current) =>
-        current.map((entry) =>
-          entry.id === item.id ? { ...entry, readAt: new Date().toISOString() } : entry,
-        ),
-      );
-      void markNotificationRead(item.id).catch(() => undefined);
+      markReadLocally((entry) => entry.id === item.id);
+      updateQueryData<number>(unreadCountKey(appMode), (count) => Math.max(0, count - 1));
+      // A failure puts the server's view back.
+      void markNotificationRead(item.id).catch(() => invalidateQueries(NOTIFICATIONS_PREFIX));
     }
     void markNotificationOpened(item.id).catch(() => undefined);
     router.push(notificationDestination(item.data) ?? item.url ?? "/notifications");
   };
 
   const markAll = async () => {
-    setItems((current) =>
-      current.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })),
-    );
-    await markAllNotificationsRead(appMode).catch(() => undefined);
+    markReadLocally(() => true);
+    setQueryData(unreadCountKey(appMode), 0, STALE.short);
+    await markAllNotificationsRead(appMode).catch(() => invalidateQueries(NOTIFICATIONS_PREFIX));
   };
 
   const tabCount = (tab: Tab) =>

@@ -3,14 +3,17 @@ import { usePricing } from "@/providers/pricing-provider";
 import { feeLabel, toCedis } from "@/lib/pricing";
 
 import { CardSkeleton, Sheet, Skeleton } from "@/components/ui";
-import { fetchProfessionalHandle, fetchProfessionalName, fetchProfessionalServices } from "@/features/services/api";
+import { fetchProfessionalHandle } from "@/features/services/api";
+import { usePublicProName, usePublicServices } from "@/features/services/queries";
 import { duration, type Service } from "@/features/services/data";
 import { useToast } from "@/providers/toast-provider";
 import { ArrowLeft, ArrowRight, Clock, Info, Share2, ShieldCheck, Wallet } from "lucide-react";
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { AppPromoBar } from "@/features/app-promo/AppPromo";
+
+const noServices: Service[] = [];
 
 /**
  * The professional's menu, rebuilt from `CustomerServicesScreen`: the same
@@ -24,24 +27,15 @@ export default function ServicesPage() {
   const { toast } = useToast();
   const id = params.id;
 
-  const [items, setItems] = useState<Service[]>([]);
-  const [professionalName, setProfessionalName] = useState("Professional services");
+  // Cached per handle/id: a revisit paints the menu at once and refreshes behind it.
+  const servicesQuery = usePublicServices(id);
+  const nameQuery = usePublicProName(id);
+  const items = servicesQuery.data ?? noServices;
+  const professionalName = nameQuery.data ?? "Professional services";
   const [activeCategory, setActiveCategory] = useState("all");
   const [selected, setSelected] = useState<Service | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!id) return;
-    setError(false);
-    void Promise.all([fetchProfessionalServices(id), fetchProfessionalName(id)])
-      .then(([services, name]) => {
-        setItems(services);
-        setProfessionalName(name);
-      })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }, [id]);
+  const loading = !id || servicesQuery.isLoading || nameQuery.isLoading;
+  const error = Boolean(servicesQuery.error && !servicesQuery.data) || Boolean(nameQuery.error && !nameQuery.data);
 
   const tabs = useMemo(() => {
     const counts = new Map<string, number>();

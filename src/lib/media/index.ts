@@ -9,7 +9,7 @@
  */
 export { MediaProcessingError, processMediaVariants } from "./processing";
 export * from "./types";
-export { deleteMedia, isR2Enabled, MediaUploadError, uploadMedia } from "./uploader";
+export { deleteMedia, isR2Enabled, MediaUploadError, uploadMedia, uploadPresignedImage } from "./uploader";
 export { feedUrl, identifyMedia, identifyScopedMedia, r2PublicUrl, thumbnailUrl, variantUrl } from "./urls";
 export { useMediaUpload } from "./useMediaUpload";
 export type { MediaUploadState } from "./useMediaUpload";

@@ -4,7 +4,13 @@ import { FeedSkeleton, LoadingRegion, Spinner } from "@/components/ui";
 import { AppPromoTile } from "@/features/app-promo/AppPromo";
 import { FeedCard } from "@/features/feed/FeedCard";
 import { fetchFeed } from "@/features/feed/api";
-import { fetchUnreadNotificationCount } from "@/features/notifications/api";
+import {
+  FEED_PAGE_SIZE,
+  seedFeedFirstPage,
+  seedPostDetail,
+  useFeedFirstPage,
+} from "@/features/feed/queries";
+import { useUnreadNotificationCount } from "@/features/notifications/queries";
 import { MessageLink } from "@/features/messaging/MessageLink";
 import type { FeedCursor, FeedPage } from "@/features/feed/rows";
 import type { FeedPost } from "@/features/feed/types";
@@ -28,10 +34,12 @@ const PROMO_AFTER = new Set([10, 22]);
  * Posts per request. Matches the server's first page, so a five-column
  * desktop is filled in one request instead of immediately asking for more.
  */
-const PAGE_SIZE = 24;
+const PAGE_SIZE = FEED_PAGE_SIZE;
 
 /** Above-the-fold pins whose images load eagerly, for a faster first paint. */
 const EAGER_IMAGES = 4;
+
+const NO_POSTS: FeedPost[] = [];
 
 /**
  * Discover, rebuilt from the customer tab: "YOUR LOOKBOOK" over "Made for you",
@@ -51,14 +59,40 @@ export function DiscoverFeed({
   const router = useRouter();
   const { signedIn, appMode } = useAuth();
 
-  const [posts, setPosts] = useState<FeedPost[]>(initialPage?.items ?? []);
-  const [unread, setUnread] = useState(0);
-  const [loading, setLoading] = useState(!initialPage);
-  const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(initialPage ? Boolean(initialPage.nextCursor) : true);
+  // A guest's server-rendered page goes into the cache as-is (declared before
+  // the query so it runs first and saves a refetch of the same page).
+  useEffect(() => {
+    seedFeedFirstPage(initialPage);
+  }, [initialPage]);
+
+  // The first page is cached: a revisit paints the last feed at once (likes and
+  // saves included) and refreshes it behind. Until the cache answers, the
+  // server-rendered page shows.
+  const feed = useFeedFirstPage();
+  const refetchFeed = feed.refetch;
+  const firstPage = feed.data ?? initialPage;
+  const unread = useUnreadNotificationCount(appMode).data ?? 0;
+
+  // Later pages stay here. They belong to the first page they followed, and
+  // are dropped when a refresh brings different posts (not just new likes).
+  const base = firstPage?.items.map((post) => post.id).join(",") ?? "";
+  const [more, setMore] = useState<{
+    base: string;
+    items: FeedPost[];
+    nextCursor: FeedCursor | null;
+    failed: boolean;
+  } | null>(null);
+  const extra = more?.base === base ? more : null;
+  const posts = firstPage ? (extra ? [...firstPage.items, ...extra.items] : firstPage.items) : NO_POSTS;
+  const nextCursor = extra ? extra.nextCursor : (firstPage?.nextCursor ?? null);
+  const loading = !firstPage && feed.isLoading;
+  const error =
+    (feed.error && !firstPage) || extra?.failed
+      ? "We couldn’t load fresh work. Check your connection and try again."
+      : null;
+  const hasMore = firstPage ? Boolean(nextCursor) && !extra?.failed : true;
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const cursor = useRef<FeedCursor | null>(initialPage?.nextCursor ?? null);
   const inFlight = useRef(false);
   // Held in state rather than a ref so the observer attaches as soon as the
   // sentinel actually mounts — it only renders once there are posts.
@@ -66,83 +100,37 @@ export function DiscoverFeed({
 
   const load = useCallback(
     async (reset = false) => {
-      if (inFlight.current) return;
+      if (reset) {
+        setMore(null);
+        await refetchFeed();
+        return;
+      }
+      if (inFlight.current || !nextCursor) return;
       inFlight.current = true;
-      if (!reset) setLoadingMore(true);
+      setLoadingMore(true);
 
       try {
-        setError(null);
-        const [page, count] = await Promise.all([
-          fetchFeed(reset ? null : cursor.current, PAGE_SIZE),
-          reset && signedIn
-            ? fetchUnreadNotificationCount(appMode)
-            : Promise.resolve(0),
-        ]);
-
-        setPosts((current) =>
-          reset ? page.items : [...current, ...page.items],
-        );
-        cursor.current = page.nextCursor;
-        setHasMore(Boolean(page.nextCursor));
-        if (reset) setUnread(count);
+        const page = await fetchFeed(nextCursor, PAGE_SIZE);
+        setMore((current) => ({
+          base,
+          items: [...(current?.base === base ? current.items : []), ...page.items],
+          nextCursor: page.nextCursor,
+          failed: false,
+        }));
       } catch {
-        setError(
-          "We couldn’t load fresh work. Check your connection and try again.",
-        );
-        setHasMore(false);
+        setMore((current) => ({
+          base,
+          items: current?.base === base ? current.items : [],
+          nextCursor,
+          failed: true,
+        }));
       } finally {
         inFlight.current = false;
-        setLoading(false);
         setLoadingMore(false);
       }
     },
-    [appMode, signedIn],
+    [base, nextCursor, refetchFeed],
   );
-
-  useEffect(() => {
-    // The server already rendered the first page; only fetch it here when it
-    // couldn't (no session cookie yet, or a server-side failure).
-    if (!initialPage) void load(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // The server renders the guest view (it never holds the login), so once the
-  // session is known the same first page (same seed, same order) is asked for
-  // again to fill in this member's likes and saves. The posts stay put.
-  useEffect(() => {
-    if (!initialPage || !signedIn) return;
-    let active = true;
-    void fetchFeed(null, PAGE_SIZE)
-      .then((page) => {
-        if (!active) return;
-        const mine = new Map(page.items.map((post) => [post.id, post]));
-        setPosts((current) =>
-          current.map((post) => {
-            const fresh = mine.get(post.id);
-            return fresh ? { ...post, liked: fresh.liked, saved: fresh.saved } : post;
-          }),
-        );
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [initialPage, signedIn]);
-
-  // With a server-rendered page, `load(true)` never runs, so the bell's unread
-  // count is fetched on its own once the session is known.
-  useEffect(() => {
-    if (!initialPage || !signedIn) return;
-    let active = true;
-    void fetchUnreadNotificationCount(appMode)
-      .then((count) => {
-        if (active) setUnread(count);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [appMode, initialPage, signedIn]);
 
   useEffect(() => {
     if (!sentinel || !hasMore || error) return;
@@ -164,7 +152,11 @@ export function DiscoverFeed({
       void load(false);
   }, [error, hasMore, load, loading, loadingMore, posts.length, sentinel]);
 
-  const open = (post: FeedPost) => router.push(`/post/${post.slug ?? post.id}`);
+  const open = (post: FeedPost) => {
+    // The viewer paints this post at once and fetches the rest behind it.
+    seedPostDetail(post);
+    router.push(`/post/${post.slug ?? post.id}`);
+  };
   const creator = (post: FeedPost) =>
     router.push(`/professional/${post.professionalId}`);
 

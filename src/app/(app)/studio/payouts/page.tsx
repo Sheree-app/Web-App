@@ -11,10 +11,9 @@ import {
   ErrorState,
   StatTile,
 } from "@/components/ui";
-import { fetchPayouts, type Payout, type PayoutsData } from "@/features/account/payoutsApi";
-import { useAuth } from "@/providers/auth-provider";
+import { usePayouts } from "@/features/account/payoutQueries";
+import { type Payout } from "@/features/account/payoutsApi";
 import { formatDay } from "@/lib/utils";
-import { useEffect, useState } from "react";
 
 const STATUS_TONE: Record<Payout["status"], "neutral" | "success" | "warning" | "error"> = {
   pending: "warning",
@@ -37,33 +36,11 @@ const TYPE_LABEL: Record<Payout["payoutType"], string> = {
  */
 export default function PayoutsPage() {
   const { money: formatMoney } = usePricing();
-  const { user } = useAuth();
-  const [data, setData] = useState<PayoutsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Cached in memory only (never stored): a revisit this session paints at once.
+  const payouts = usePayouts();
+  const data = payouts.data;
 
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-    fetchPayouts(user.id)
-      .then((next) => {
-        if (active) setData(next);
-      })
-      .catch((cause: unknown) => {
-        if (active) {
-          setError(userMessage(cause, "We couldn’t load your payouts."));
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [user]);
-
-  if (loading) {
+  if (payouts.isLoading) {
     return (
       <div className="flex flex-col gap-3">
         <CardSkeleton lines={2} />
@@ -72,8 +49,16 @@ export default function PayoutsPage() {
     );
   }
 
-  if (error || !data) {
-    return <ErrorState message={error ?? "Your payouts couldn’t be loaded."} />;
+  if (!data) {
+    return (
+      <ErrorState
+        message={
+          payouts.error
+            ? userMessage(payouts.error, "We couldn’t load your payouts.")
+            : "Your payouts couldn’t be loaded."
+        }
+      />
+    );
   }
 
   const needsAttention = data.items.filter((item) => item.status === "failed" || item.status === "reversed");

@@ -5,16 +5,14 @@ import { usePricing } from "@/providers/pricing-provider";
 import { Avatar, Skeleton, Spinner, Sheet } from "@/components/ui";
 import {
   PayoutAccountRequiredError,
-  fetchProfessionalDashboard,
   manageBooking,
-  type ProfessionalDashboard,
   type StudioBooking,
 } from "@/features/dashboard/api";
-import { fetchUnreadNotificationCount } from "@/features/notifications/api";
+import { useProfessionalDashboard, useStudioUnreadCount } from "@/features/dashboard/queries";
 import { useToast } from "@/providers/toast-provider";
 import { Bell, ChevronRight, Hourglass, Sun, TrendingUp } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 /** Cedi, whole numbers — the same figures the app puts on the metric cards. */
 
@@ -46,33 +44,12 @@ export default function StudioPage() {
   const { money } = usePricing();
   const { toast, error: showError } = useToast();
 
-  const [data, setData] = useState<ProfessionalDashboard | null>(null);
-  const [unread, setUnread] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  // Cached: a revisit paints the last pulse at once and refreshes behind it.
+  const dashboard = useProfessionalDashboard();
+  const unread = useStudioUnreadCount().data ?? 0;
+  const data = dashboard.data;
   const [busy, setBusy] = useState("");
   const [confirmCancel, setConfirmCancel] = useState<StudioBooking | null>(null);
-
-  const load = useCallback(async (refresh = false) => {
-    if (!refresh) setLoading(true);
-    try {
-      const [dashboard, notificationCount] = await Promise.all([
-        fetchProfessionalDashboard(),
-        fetchUnreadNotificationCount("professional"),
-      ]);
-      setData(dashboard);
-      setUnread(notificationCount);
-      setError(false);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const update = async (item: StudioBooking, action: "confirm" | "complete" | "cancel") => {
     setBusy(item.id);
@@ -83,7 +60,8 @@ export default function StudioPage() {
         action === "cancel" ? "Cancelled by the professional" : undefined,
       )) as ActionResult;
       setConfirmCancel(null);
-      await load(true);
+      // `manageBooking` marked the dashboard stale; wait for the fresh rail.
+      await dashboard.refetch();
       toast(
         action === "cancel"
           ? "Appointment cancelled"
@@ -142,19 +120,19 @@ export default function StudioPage() {
         </Link>
       </header>
 
-      {loading ? (
+      {dashboard.isLoading ? (
         <div className="flex flex-col items-center gap-3 pt-8">
           <Skeleton className="h-7 w-[54%]" />
           <Skeleton className="h-[108px] w-full rounded-card" />
           <Skeleton className="h-20 w-full rounded-card" />
           <Skeleton className="h-20 w-full rounded-card" />
         </div>
-      ) : error || !data ? (
+      ) : !data ? (
         <State
           title="Your studio pulse couldn’t load"
           body="Check your connection, then try again."
           action="Try again"
-          onAction={() => void load()}
+          onAction={() => void dashboard.refetch()}
         />
       ) : (
         <>

@@ -18,8 +18,8 @@ export const LEGAL_LINKS = [
  */
 export function LegalFooter({ className }: { className?: string }) {
   return (
-    <footer className={cn("flex flex-col gap-2 text-caption text-muted", className)}>
-      <nav aria-label="Legal" className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+    <footer className={cn("flex flex-col items-center gap-1.5 text-center text-[11px] leading-4 text-muted", className)}>
+      <nav aria-label="Legal" className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
         {LEGAL_LINKS.map((link) => (
           <Link
             key={link.href}

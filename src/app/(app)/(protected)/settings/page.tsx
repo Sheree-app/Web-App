@@ -1,7 +1,8 @@
 "use client";
 
 import { Sheet, Switch } from "@/components/ui";
-import { deleteAccount, fetchWantsProfessionalAccount, setWantsProfessionalAccount } from "@/features/account/api";
+import { deleteAccount, setWantsProfessionalAccount } from "@/features/account/api";
+import { useAccountDetails } from "@/features/account/queries";
 import { userMessage } from "@/lib/errors";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme, type AppearancePreference } from "@/providers/theme-provider";
@@ -25,7 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const APPEARANCES: Array<{
   value: AppearancePreference;
@@ -48,31 +49,18 @@ export default function SettingsPage() {
   const { user, role, refreshProfile, signOut } = useAuth();
   const { error: showError } = useToast();
 
-  const [wantsProfessional, setWantsProfessional] = useState(false);
+  // Cached `/v1/me`; the toggle writes its new value back into it.
+  const wantsProfessional = Boolean(useAccountDetails().data?.wants_professional_account);
   const [professionalSaving, setProfessionalSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-    void fetchWantsProfessionalAccount(user.id)
-      .then((value) => {
-        if (active) setWantsProfessional(value);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [user]);
 
   const toggleProfessional = async (value: boolean) => {
     if (!user) return;
     setProfessionalSaving(true);
     try {
       await setWantsProfessionalAccount(value);
-      setWantsProfessional(value);
       await refreshProfile();
     } catch (cause) {
       showError("Preference not saved", userMessage(cause, "Try again."));

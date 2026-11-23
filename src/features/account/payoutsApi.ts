@@ -7,6 +7,9 @@ import {
 
 export type { PayoutAccount };
 
+/** Never persisted: keys starting with `payout` stay in memory (`@/lib/query-cache`). */
+export const PAYOUTS_KEY = "payout:list";
+
 export type PayoutStatus =
   | "pending"
   | "processing"
